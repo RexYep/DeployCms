@@ -1,3 +1,20 @@
-.env
+# Composer dependencies
 /vendor/
-.env.*
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE/editor files
+/.vscode/
+/.idea/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Logs and cache
+*.log
+/tmp/
+/cache/
