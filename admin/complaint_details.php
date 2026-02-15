@@ -20,11 +20,15 @@ $success = '';
 // Fetch complaint details
 $stmt = $conn->prepare("
     SELECT c.*, cat.category_name, u.full_name as user_name, u.email as user_email, u.phone as user_phone,
-           admin.full_name as assigned_admin_name
+           admin.full_name as assigned_admin_name,
+           locker.full_name as locked_by_name,
+           reviewer.full_name as reviewed_by_name
     FROM complaints c
     LEFT JOIN categories cat ON c.category_id = cat.category_id
     LEFT JOIN users u ON c.user_id = u.user_id
     LEFT JOIN users admin ON c.assigned_to = admin.user_id
+    LEFT JOIN users locker ON c.locked_by = locker.user_id
+    LEFT JOIN users reviewer ON c.reviewed_by = reviewer.user_id
     WHERE c.complaint_id = ?
 ");
 $stmt->bind_param("i", $complaint_id);
@@ -48,23 +52,36 @@ if (!isSuperAdmin() && $complaint['assigned_to'] != $_SESSION['user_id']) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_comment'])) {
     $comment_text = sanitizeInput($_POST['comment']);
     
-    $result = addComment($complaint_id, $admin_id, $comment_text);
+    // Check if admin can modify this complaint
+    $can_modify = canAdminModifyComplaint($complaint_id, $admin_id, isSuperAdmin());
     
-    if ($result['success']) {
-        // Notify user if admin posted
-        createNotification(
-            $complaint['user_id'], 
-            "Admin Replied to Complaint #$complaint_id",
-            "Admin responded: " . substr($comment_text, 0, 100) . "...",
-            'info',
-            $complaint_id
-        );
-        
-        $success = $result['message'];
-        header("Location: complaint_details.php?id=$complaint_id#comments");
-        exit();
+    if (!$can_modify['can_modify']) {
+        $error = $can_modify['reason'];
     } else {
-        $error = $result['message'];
+        $result = addComment($complaint_id, $admin_id, $comment_text);
+
+        if ($result['success']) {
+            // Get admin name
+            $stmt_admin = $conn->prepare("SELECT full_name FROM users WHERE user_id = ?");
+            $stmt_admin->bind_param("i", $admin_id);
+            $stmt_admin->execute();
+            $admin_name = $stmt_admin->get_result()->fetch_assoc()['full_name'];
+
+            // Notify user with enhanced notification
+            notifyComment(
+                $complaint['user_id'],
+                $complaint_id,
+                $admin_name,
+                $comment_text,
+                true // is_admin_comment
+            );
+
+            $success = $result['message'];
+            header("Location: complaint_details.php?id=$complaint_id#comments");
+            exit();
+        } else {
+            $error = $result['message'];
+        }
     }
 }
 
@@ -83,12 +100,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_status'])) {
     $new_status = sanitizeInput($_POST['status']);
     $admin_response = sanitizeInput($_POST['admin_response']);
     $old_status = $complaint['status'];
+
     
-    // Update complaint
-    $stmt = $conn->prepare("UPDATE complaints SET status = ?, admin_response = ?, updated_date = NOW() WHERE complaint_id = ?");
-    $stmt->bind_param("ssi", $new_status, $admin_response, $complaint_id);
+    // Check if admin can modify this complaint
+    $can_modify = canAdminModifyComplaint($complaint_id, $admin_id, isSuperAdmin());
     
-    if ($stmt->execute()) {
+
+    if (!$can_modify['can_modify']) {
+        $error = $can_modify['reason'];
+    } else {
+        // Validate status progression
+        $status_check = canChangeStatus($old_status, $new_status, isSuperAdmin());
+        
+        if (!$status_check['allowed']) {
+            $error = $status_check['message'];
+        } else {
+            // Update complaint
+            $stmt = $conn->prepare("UPDATE complaints SET status = ?, admin_response = ?, updated_date = NOW() WHERE complaint_id = ?");
+            $stmt->bind_param("ssi", $new_status, $admin_response, $complaint_id);
+            
+            if ($stmt->execute()) {
         // If status is resolved, set resolved_date
         if ($new_status === 'Resolved' || $new_status === 'Closed') {
             $stmt = $conn->prepare("UPDATE complaints SET resolved_date = NOW() WHERE complaint_id = ?");
@@ -102,14 +133,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_status'])) {
         $stmt->bind_param("iisss", $complaint_id, $admin_id, $old_status, $new_status, $comment);
         $stmt->execute();
         
-        // Create notification for user
-        $notif_title = "Complaint #$complaint_id Status Updated";
-        $notif_message = "Your complaint status has been changed from '$old_status' to '$new_status'.";
-        if (!empty($admin_response)) {
-            $notif_message .= " Admin response: " . substr($admin_response, 0, 100) . "...";
-        }
-        $notif_type = ($new_status == 'Resolved' || $new_status == 'Closed') ? 'success' : 'info';
-        createNotification($complaint['user_id'], $notif_title, $notif_message, $notif_type, $complaint_id);
+       // Get admin name for notification
+$stmt_admin = $conn->prepare("SELECT full_name FROM users WHERE user_id = ?");
+$stmt_admin->bind_param("i", $admin_id);
+$stmt_admin->execute();
+$admin_name = $stmt_admin->get_result()->fetch_assoc()['full_name'];
+
+// Create notification for user with enhanced context
+notifyStatusChange(
+    $complaint['user_id'],
+    $complaint_id,
+    $old_status,
+    $new_status,
+    $admin_name,
+    $admin_response
+);
         
         $success = "Complaint updated successfully!";
         
@@ -130,40 +168,303 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_status'])) {
     } else {
         $error = "Failed to update complaint. Please try again.";
     }
+    } // Close status_check else
+    } // Close can_modify else
 }
 
-// Handle assignment
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['assign_complaint'])) {
+// Handle admin assignment
+if (isset($_POST['assign_admin']) && isSuperAdmin()) {
     $assigned_admin = (int)$_POST['assigned_to'];
     
-    // Check if the target is a regular admin (not super admin)
-    $stmt = $conn->prepare("SELECT role, admin_level FROM users WHERE user_id = ?");
-    $stmt->bind_param("i", $assigned_admin);
+    // Get current assignment
+    $stmt = $conn->prepare("SELECT assigned_to FROM complaints WHERE complaint_id = ?");
+    $stmt->bind_param("i", $complaint_id);
     $stmt->execute();
-    $target_admin = $stmt->get_result()->fetch_assoc();
+    $old_assignment = $stmt->get_result()->fetch_assoc();
+    $old_admin_id = $old_assignment['assigned_to'];
     
-    // Only allow assignment to regular admins (not super admins)
-    if (!isSuperAdmin() && $target_admin['admin_level'] == 'super_admin') {
-        $error = 'You cannot assign complaints to Super Admins. Please assign to a Regular Admin.';
-    } else {
-        $stmt = $conn->prepare("UPDATE complaints SET assigned_to = ? WHERE complaint_id = ?");
-        $stmt->bind_param("ii", $assigned_admin, $complaint_id);
+    // ========================================
+    // APPROVAL STATUS CHECK (NEW)
+    // ========================================
+    if ($complaint['approval_status'] !== 'approved') {
+        $approval_status_text = [
+            'pending_review' => 'pending review',
+            'rejected' => 'rejected',
+            'changes_requested' => 'awaiting changes from user'
+        ];
+        $status_text = $approval_status_text[$complaint['approval_status']] ?? 'not approved';
         
-        if ($stmt->execute()) {
-            // Log to history
-            $stmt = $conn->prepare("INSERT INTO complaint_history (complaint_id, changed_by, new_status, comment) VALUES (?, ?, ?, 'Complaint assigned to admin')");
-            $status = $complaint['status'];
-            $stmt->bind_param("iis", $complaint_id, $admin_id, $status);
-            $stmt->execute();
-            
-            $success = "Complaint assigned successfully!";
-            
-            // Refresh data
-            header("Location: complaint_details.php?id=" . $complaint_id);
-            exit();
-        } else {
-            $error = "Failed to assign complaint.";
+        $error = "Cannot assign this complaint - it is currently $status_text. ";
+        
+        if ($complaint['approval_status'] === 'pending_review') {
+            $error .= '<a href="review_complaints.php?filter=pending_review" class="alert-link">Go to Review Complaints</a> to approve it first.';
+        } elseif ($complaint['approval_status'] === 'changes_requested') {
+            $error .= 'Waiting for user to make requested changes and resubmit.';
+        } elseif ($complaint['approval_status'] === 'rejected') {
+            $error .= 'This complaint has been rejected and cannot be assigned.';
         }
+    } 
+    // ========================================
+    // CLOSED COMPLAINT CHECK (Existing)
+    // ========================================
+    elseif ($complaint['status'] === 'Closed') {
+        $error = 'Cannot assign a closed complaint. Please reopen it first.';
+    }
+    // ========================================
+    // LOCKED COMPLAINT CHECK (Existing)
+    // ========================================
+    elseif (isComplaintLocked($complaint_id)) {
+        $error = 'This complaint is locked and cannot be modified.';
+    }
+    // ========================================
+    // PROCEED WITH ASSIGNMENT
+    // ========================================
+    else {
+        // Validate assignment
+        if (empty($assigned_admin)) {
+            $error = 'Please select an admin to assign.';
+        } else {
+            // Check if it's a reassignment
+            $is_reassignment = !empty($old_admin_id);
+            
+            // If reassignment, require reason
+            if ($is_reassignment) {
+                $reassignment_reason = sanitizeInput($_POST['reassignment_reason'] ?? '');
+                if (empty($reassignment_reason)) {
+                    $error = 'Please provide a reason for reassignment.';
+                } else {
+                    // Get target admin details
+                    $stmt = $conn->prepare("SELECT full_name FROM users WHERE user_id = ?");
+                    $stmt->bind_param("i", $assigned_admin);
+                    $stmt->execute();
+                    $target_admin = $stmt->get_result()->fetch_assoc();
+                    
+                    // Get old admin name
+                    $stmt = $conn->prepare("SELECT full_name FROM users WHERE user_id = ?");
+                    $stmt->bind_param("i", $old_admin_id);
+                    $stmt->execute();
+                    $old_admin_name = $stmt->get_result()->fetch_assoc()['full_name'];
+                    
+                    // Update assignment
+                    $stmt = $conn->prepare("UPDATE complaints SET assigned_to = ?, assigned_at = NOW() WHERE complaint_id = ?");
+                    $stmt->bind_param("ii", $assigned_admin, $complaint_id);
+                    
+                    if ($stmt->execute()) {
+                        // Record reassignment
+                        recordReassignment($complaint_id, $old_admin_id, $assigned_admin, $admin_id, $reassignment_reason);
+                        
+                        // Notify newly assigned admin
+                        if ($assigned_admin != $admin_id) {
+                            notifyAssignment(
+                                $assigned_admin,
+                                $complaint_id,
+                                $target_admin['full_name'],
+                                true,
+                                $old_admin_name,
+                                $reassignment_reason
+                            );
+                        }
+                        
+                        // Notify user
+                        notifyAssignment(
+                            $complaint['user_id'],
+                            $complaint_id,
+                            $target_admin['full_name'],
+                            true,
+                            $old_admin_name,
+                            $reassignment_reason
+                        );
+                        
+                        // Notify old admin
+                        if ($old_admin_id) {
+                            createEnhancedNotification([
+                                'user_id' => $old_admin_id,
+                                'title' => "🔄 Complaint Reassigned Away",
+                                'message' => "Complaint #$complaint_id has been reassigned to " . $target_admin['full_name'] . ".\n\n📝 Reason: $reassignment_reason",
+                                'type' => 'warning',
+                                'complaint_id' => $complaint_id,
+                                'reference_type' => 'reassignment',
+                                'action_url' => "admin/complaint_details.php?id=$complaint_id",
+                                'metadata' => [
+                                    'new_admin_name' => $target_admin['full_name'],
+                                    'reason' => $reassignment_reason
+                                ]
+                            ]);
+                        }
+                        
+                        $success = "Complaint reassigned successfully to " . htmlspecialchars($target_admin['full_name']) . ".";
+                        
+                        // Refresh complaint data
+                        $stmt = $conn->prepare("
+                            SELECT c.*, cat.category_name, u.full_name as admin_name, u.email as admin_email,
+                                   locked_by_user.full_name as locked_by_name
+                            FROM complaints c
+                            LEFT JOIN categories cat ON c.category_id = cat.category_id
+                            LEFT JOIN users u ON c.assigned_to = u.user_id
+                            LEFT JOIN users locked_by_user ON c.locked_by = locked_by_user.user_id
+                            WHERE c.complaint_id = ?
+                        ");
+                        $stmt->bind_param("i", $complaint_id);
+                        $stmt->execute();
+                        $complaint = $stmt->get_result()->fetch_assoc();
+                    }
+                }
+            } else {
+                // First-time assignment
+                $assignment_note = sanitizeInput($_POST['assignment_note'] ?? '');
+                
+                // Get target admin details
+                $stmt = $conn->prepare("SELECT full_name FROM users WHERE user_id = ?");
+                $stmt->bind_param("i", $assigned_admin);
+                $stmt->execute();
+                $target_admin = $stmt->get_result()->fetch_assoc();
+                
+                // Update assignment
+                $stmt = $conn->prepare("UPDATE complaints SET assigned_to = ?, assigned_at = NOW(), status = 'Assigned' WHERE complaint_id = ?");
+                $stmt->bind_param("ii", $assigned_admin, $complaint_id);
+                
+                if ($stmt->execute()) {
+                    // Log assignment
+                    $stmt = $conn->prepare("
+                        INSERT INTO complaint_history 
+                        (complaint_id, changed_by, old_status, new_status, comment) 
+                        VALUES (?, ?, 'Pending', 'Assigned', ?)
+                    ");
+                    $comment = "Assigned to " . $target_admin['full_name'];
+                    if (!empty($assignment_note)) {
+                        $comment .= ". Note: $assignment_note";
+                    }
+                    $stmt->bind_param("iis", $complaint_id, $admin_id, $comment);
+                    $stmt->execute();
+                    
+                    // Notify assigned admin
+                    if ($assigned_admin != $admin_id) {
+                        notifyAssignment(
+                            $assigned_admin,
+                            $complaint_id,
+                            $target_admin['full_name'],
+                            false,
+                            null,
+                            null
+                        );
+                    }
+                    
+                    // Notify user
+                    notifyAssignment(
+                        $complaint['user_id'],
+                        $complaint_id,
+                        $target_admin['full_name'],
+                        false,
+                        null,
+                        null
+                    );
+                    
+                    $success = "Complaint assigned successfully to " . htmlspecialchars($target_admin['full_name']) . ".";
+                    
+                    // Refresh complaint data
+                    $stmt = $conn->prepare("
+                        SELECT c.*, cat.category_name, u.full_name as admin_name, u.email as admin_email,
+                               locked_by_user.full_name as locked_by_name
+                        FROM complaints c
+                        LEFT JOIN categories cat ON c.category_id = cat.category_id
+                        LEFT JOIN users u ON c.assigned_to = u.user_id
+                        LEFT JOIN users locked_by_user ON c.locked_by = locked_by_user.user_id
+                        WHERE c.complaint_id = ?
+                    ");
+                    $stmt->bind_param("i", $complaint_id);
+                    $stmt->execute();
+                    $complaint = $stmt->get_result()->fetch_assoc();
+                }
+            }
+        }
+    }
+}
+
+// Handle lock/unlock complaint
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['toggle_lock'])) {
+    if (!isSuperAdmin()) {
+        $error = 'Only Super Admin can lock/unlock complaints.';
+    } else {
+        $action = $_POST['lock_action']; // 'lock' or 'unlock'
+        $lock_reason = sanitizeInput($_POST['lock_reason'] ?? '');
+        
+        if ($action === 'lock') {
+            $result = lockComplaint($complaint_id, $admin_id, $lock_reason);
+        } else {
+            $result = unlockComplaint($complaint_id, $admin_id, $lock_reason);
+        }
+        
+        if ($result['success']) {
+            $success = $result['message'];
+            
+            // Refresh complaint data
+            $stmt = $conn->prepare("
+                SELECT c.*, cat.category_name, u.full_name as user_name, u.email as user_email, u.phone as user_phone,
+                       admin.full_name as assigned_admin_name,
+                       locker.full_name as locked_by_name
+                FROM complaints c
+                LEFT JOIN categories cat ON c.category_id = cat.category_id
+                LEFT JOIN users u ON c.user_id = u.user_id
+                LEFT JOIN users admin ON c.assigned_to = admin.user_id
+                LEFT JOIN users locker ON c.locked_by = locker.user_id
+                WHERE c.complaint_id = ?
+            ");
+            $stmt->bind_param("i", $complaint_id);
+            $stmt->execute();
+            $complaint = $stmt->get_result()->fetch_assoc();
+        } else {
+            $error = $result['message'];
+        }
+    }
+}
+
+// Handle reopen request approval
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['approve_reopen'])) {
+    $reopen_id = (int)$_POST['reopen_id'];
+    $review_note = sanitizeInput($_POST['review_note']);
+    
+    $result = approveReopenRequest($reopen_id, $admin_id, $review_note);
+    
+    if ($result['success']) {
+        // Notify user
+        createNotification(
+            $complaint['user_id'],
+            "Reopen Request Approved #$complaint_id",
+            "Your request to reopen the complaint has been approved. " . $review_note,
+            'success',
+            $complaint_id
+        );
+        
+        $success = $result['message'];
+        header("Location: complaint_details.php?id=$complaint_id");
+        exit();
+    } else {
+        $error = $result['message'];
+    }
+}
+
+// Handle reopen request rejection
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['reject_reopen'])) {
+    $reopen_id = (int)$_POST['reopen_id'];
+    $review_note = sanitizeInput($_POST['review_note']);
+    
+    $result = rejectReopenRequest($reopen_id, $admin_id, $review_note);
+    
+    if ($result['success']) {
+        // Notify user
+        createNotification(
+            $complaint['user_id'],
+            "Reopen Request Rejected #$complaint_id",
+            "Your request to reopen has been reviewed. Admin response: " . $review_note,
+            'info',
+            $complaint_id
+        );
+        
+        $success = $result['message'];
+        header("Location: complaint_details.php?id=$complaint_id");
+        exit();
+    } else {
+        $error = $result['message'];
     }
 }
 
@@ -207,6 +508,26 @@ include '../includes/navbar.php';
     </div>
 </div>
 
+<!-- Lock Status Alert -->
+<?php if ($complaint['is_locked'] == 1): ?>
+    <div class="alert alert-danger border-danger">
+        <div class="d-flex align-items-center">
+            <i class="bi bi-lock-fill" style="font-size: 2rem; margin-right: 15px;"></i>
+            <div class="flex-grow-1">
+                <h5 class="mb-1"><i class="bi bi-exclamation-triangle-fill"></i> This Complaint is LOCKED</h5>
+                <p class="mb-1">
+                    <strong>Locked by:</strong> <?php echo htmlspecialchars($complaint['locked_by_name']); ?><br>
+                    <strong>Locked on:</strong> <?php echo formatDateTime($complaint['locked_at']); ?><br>
+                    <strong>Reason:</strong> <?php echo htmlspecialchars($complaint['lock_reason']); ?>
+                </p>
+                <small class="text-muted">
+                    <i class="bi bi-info-circle"></i> No modifications can be made to this complaint until it is unlocked by Super Admin.
+                </small>
+            </div>
+        </div>
+    </div>
+<?php endif; ?>
+
 <?php if (!empty($error)): ?>
     <div class="alert alert-danger alert-dismissible fade show" role="alert">
         <i class="bi bi-exclamation-triangle me-2"></i><?php echo $error; ?>
@@ -226,13 +547,32 @@ include '../includes/navbar.php';
     <div class="col-lg-8">
         <div class="card">
             <div class="card-header">
-                <div class="d-flex justify-content-between align-items-center">
-                    <span><i class="bi bi-file-text"></i> Complaint #<?php echo $complaint['complaint_id']; ?></span>
-                    <span class="<?php echo getStatusBadge($complaint['status']); ?>">
-                        <?php echo $complaint['status']; ?>
-                    </span>
-                </div>
-            </div>
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <span><i class="bi bi-file-text"></i> Complaint #<?php echo $complaint['complaint_id']; ?></span>
+        <div class="d-flex gap-2">
+            <!-- Approval Status Badge -->
+            <?php
+            $approval_badges = [
+                'pending_review' => '<span class="badge bg-warning text-dark"><i class="bi bi-hourglass-split"></i> Pending Review</span>',
+                'approved' => '<span class="badge bg-success"><i class="bi bi-check-circle-fill"></i> Approved</span>',
+                'rejected' => '<span class="badge bg-danger"><i class="bi bi-x-circle-fill"></i> Rejected</span>',
+                'changes_requested' => '<span class="badge bg-info"><i class="bi bi-pencil-square"></i> Changes Needed</span>'
+            ];
+            echo $approval_badges[$complaint['approval_status']] ?? '';
+            
+            // Add warning if not approved
+            if ($complaint['approval_status'] !== 'approved') {
+                echo ' <span class="badge bg-danger"><i class="bi bi-lock-fill"></i> Cannot Assign</span>';
+            }
+            ?>
+            
+            <!-- Status Badge -->
+            <span class="<?php echo getStatusBadge($complaint['status']); ?>">
+                <?php echo $complaint['status']; ?>
+            </span>
+        </div>
+    </div>
+</div>
             <div class="card-body">
                 <h4 class="mb-3"><?php echo htmlspecialchars($complaint['subject']); ?></h4>
                 
@@ -249,6 +589,24 @@ include '../includes/navbar.php';
                             <?php echo $complaint['priority']; ?>
                         </span>
                     </div>
+
+                    <!-- NEW: Approval Status Info -->
+<div class="col-md-4">
+    <strong>Approval:</strong><br>
+    <?php
+    $approval_badges_small = [
+        'pending_review' => '<span class="badge bg-warning text-dark"><i class="bi bi-hourglass"></i> Pending</span>',
+        'approved' => '<span class="badge bg-success"><i class="bi bi-check-circle"></i> Approved</span>',
+        'rejected' => '<span class="badge bg-danger"><i class="bi bi-x-circle"></i> Rejected</span>',
+        'changes_requested' => '<span class="badge bg-info"><i class="bi bi-pencil"></i> Changes</span>'
+    ];
+    echo $approval_badges_small[$complaint['approval_status']] ?? '';
+    ?>
+    <?php if (!empty($complaint['reviewed_by_name'])): ?>
+        <br><small class="text-muted">by <?php echo htmlspecialchars($complaint['reviewed_by_name']); ?></small>
+    <?php endif; ?>
+</div>
+
                     <div class="col-md-4">
                         <strong>Days Pending:</strong><br>
                         <?php 
@@ -260,6 +618,16 @@ include '../includes/navbar.php';
                         </span>
                     </div>
                 </div>
+
+                <?php if (!empty($complaint['rejection_reason']) && $complaint['approval_status'] !== 'approved'): ?>
+    <div class="alert alert-<?php echo $complaint['approval_status'] === 'rejected' ? 'danger' : 'info'; ?> mt-3 mb-4">
+        <h6 class="alert-heading">
+            <i class="bi bi-<?php echo $complaint['approval_status'] === 'rejected' ? 'x-circle' : 'info-circle'; ?>-fill"></i>
+            <?php echo $complaint['approval_status'] === 'rejected' ? 'Rejection Reason' : 'Changes Requested'; ?>
+        </h6>
+        <p class="mb-0" style="white-space: pre-wrap;"><?php echo nl2br(htmlspecialchars($complaint['rejection_reason'])); ?></p>
+    </div>
+<?php endif; ?>
 
                 <div class="mb-4">
                     <strong>Description:</strong>
@@ -337,38 +705,55 @@ include '../includes/navbar.php';
         </div>
 
         <!-- Update Status Form -->
-        <div class="card mt-3">
-            <div class="card-header">
-                <i class="bi bi-pencil-square"></i> Update Complaint Status
-            </div>
-            <div class="card-body">
-                <form method="POST" action="">
-                    <div class="row mb-3">
-                        <div class="col-md-6">
-                            <label for="status" class="form-label">Status <span class="text-danger">*</span></label>
-                            <select class="form-select" id="status" name="status" required>
-                                <option value="Pending" <?php echo $complaint['status'] == 'Pending' ? 'selected' : ''; ?>>Pending</option>
-                                <option value="In Progress" <?php echo $complaint['status'] == 'In Progress' ? 'selected' : ''; ?>>In Progress</option>
-                                <option value="Resolved" <?php echo $complaint['status'] == 'Resolved' ? 'selected' : ''; ?>>Resolved</option>
-                                <option value="Closed" <?php echo $complaint['status'] == 'Closed' ? 'selected' : ''; ?>>Closed</option>
-                            </select>
-                        </div>
-                    </div>
+         <form method="POST" action="">
+<div class="mb-3">
 
-                    <div class="mb-3">
-                        <label for="admin_response" class="form-label">Admin Response</label>
-                        <textarea class="form-control" id="admin_response" name="admin_response" rows="5" 
-                                  placeholder="Enter your response to the user..."><?php echo htmlspecialchars($complaint['admin_response'] ?? ''); ?></textarea>
-                        <small class="text-muted">This message will be visible to the user</small>
-                    </div>
-
-                    <button type="submit" name="update_status" class="btn btn-primary">
-                        <i class="bi bi-save"></i> Update Complaint
-                    </button>
-                </form>
-            </div>
+    <label for="status" class="form-label">Update Status</label>
+    <?php
+    // Get allowed next statuses based on current status and admin level
+    $allowed_statuses = getAllowedNextStatuses($complaint['status'], isSuperAdmin());
+    ?>
+    
+    <?php if (!empty($allowed_statuses)): ?>
+        <select class="form-select" id="status" name="status" required>
+            <option value="">Select Status</option>
+            <?php foreach ($allowed_statuses as $status_option): ?>
+                <option value="<?php echo htmlspecialchars($status_option['status']); ?>">
+                    <?php echo htmlspecialchars($status_option['status']); ?>
+                </option>
+            <?php endforeach; ?>
+        </select>
+        <small class="text-muted">
+            <i class="bi bi-info-circle"></i> 
+            Current status: <strong><?php echo $complaint['status']; ?></strong>
+        </small>
+        
+        <div class="mb-3 mt-3">
+            <label for="admin_response" class="form-label">Admin Response/Note</label>
+            <textarea class="form-control" id="admin_response" name="admin_response" rows="4" 
+                      placeholder="Provide details about this status update..."></textarea>
+            <small class="text-muted">This message will be visible to the user.</small>
         </div>
 
+        <button type="submit" name="update_status" class="btn btn-primary w-100">
+            <i class="bi bi-arrow-up-circle"></i> Update Status
+        </button>
+        
+    <?php else: ?>
+        <div class="alert alert-info mb-0">
+            <i class="bi bi-lock-fill"></i> 
+            <strong>Status: <?php echo $complaint['status']; ?></strong>
+            <?php if ($complaint['status'] == 'Closed'): ?>
+                <p class="mb-0 mt-2">This complaint is closed. No further status updates are possible.</p>
+            <?php elseif ($complaint['status'] == 'Pending'): ?>
+                <p class="mb-0 mt-2">Please assign this complaint to an admin first before updating its status.</p>
+            <?php else: ?>
+                <p class="mb-0 mt-2">No status transitions available from the current state.</p>
+            <?php endif; ?>
+        </div>
+    <?php endif; ?>
+</div>
+    </form>
         <!-- History -->
         <div class="card mt-3">
             <div class="card-header">
@@ -407,6 +792,59 @@ include '../includes/navbar.php';
                 <?php endif; ?>
             </div>
         </div>
+
+        <!-- Reassignment History -->
+<?php 
+$reassignment_history = getReassignmentHistory($complaint_id);
+if ($reassignment_history->num_rows > 0): 
+?>
+<div class="card mt-3">
+    <div class="card-header bg-info text-white">
+        <i class="bi bi-arrow-repeat"></i> Reassignment History (<?php echo $reassignment_history->num_rows; ?>)
+    </div>
+    <div class="card-body">
+        <div class="timeline">
+            <?php while ($rh = $reassignment_history->fetch_assoc()): ?>
+            <div class="timeline-item mb-3 pb-3" style="border-left: 2px solid #17a2b8; padding-left: 20px; position: relative;">
+                <div style="position: absolute; left: -8px; top: 0; width: 14px; height: 14px; background: #17a2b8; border-radius: 50%;"></div>
+                
+                <div class="d-flex justify-content-between mb-2">
+                    <div>
+                        <strong><?php echo htmlspecialchars($rh['reassigned_by_name']); ?></strong> 
+                        <span class="text-muted">reassigned complaint</span>
+                    </div>
+                    <small class="text-muted"><?php echo formatDateTime($rh['reassigned_at']); ?></small>
+                </div>
+                
+                <div class="mb-2">
+                    <?php if ($rh['old_admin_id']): ?>
+                        <span class="badge bg-secondary">
+                            <i class="bi bi-person-x"></i> <?php echo htmlspecialchars($rh['old_admin_name']); ?>
+                        </span>
+                        <i class="bi bi-arrow-right mx-2"></i>
+                    <?php else: ?>
+                        <span class="badge bg-light text-dark">
+                            <i class="bi bi-inbox"></i> Unassigned
+                        </span>
+                        <i class="bi bi-arrow-right mx-2"></i>
+                    <?php endif; ?>
+                    <span class="badge bg-info">
+                        <i class="bi bi-person-check"></i> <?php echo htmlspecialchars($rh['new_admin_name']); ?>
+                    </span>
+                </div>
+                
+                <div class="alert alert-light mb-0">
+                    <small>
+                        <i class="bi bi-chat-quote"></i> 
+                        <strong>Reason:</strong> <?php echo htmlspecialchars($rh['reason']); ?>
+                    </small>
+                </div>
+            </div>
+            <?php endwhile; ?>
+        </div>
+    </div>
+</div>
+<?php endif; ?>
 
         <!-- Comments Section -->
         <div class="card mt-3" id="comments">
@@ -518,65 +956,163 @@ include '../includes/navbar.php';
                 </div>
                 <?php endif; ?>
             </div>
-        </div>
 
-        <!-- Assign Complaint -->
-        <?php if (isSuperAdmin()): ?>
-        <div class="card mt-3">
-            <div class="card-header bg-light">
-                <i class="bi bi-person-check"></i> Assign Complaint
-            </div>
-            <div class="card-body">
-                <?php if ($admins->num_rows > 0): ?>
-                    <form method="POST" action="">
-                        <div class="mb-3">
-                            <label for="assigned_to" class="form-label">Assign to Admin</label>
-                            <select class="form-select" id="assigned_to" name="assigned_to" required>
-                                <option value="">-- Select Admin --</option>
-                                <?php while ($admin = $admins->fetch_assoc()): ?>
-                                    <option value="<?php echo $admin['user_id']; ?>" 
-                                        <?php echo $complaint['assigned_to'] == $admin['user_id'] ? 'selected' : ''; ?>>
-                                        <?php echo htmlspecialchars($admin['full_name']); ?>
-                                        <?php if (isSuperAdmin() && $admin['admin_level'] == 'super_admin'): ?>
-                                            (Super Admin)
-                                        <?php endif; ?>
-                                    </option>
-                                <?php endwhile; ?>
-                            </select>
-                            <?php if (!isSuperAdmin()): ?>
-                                <small class="text-muted">
-                                    <i class="bi bi-info-circle"></i> You can only assign to Regular Admins
-                                </small>
-                            <?php endif; ?>
-                        </div>
-                        <button type="submit" name="assign_complaint" class="btn btn-info btn-sm w-100">
-                            <i class="bi bi-person-plus"></i> Assign
-                        </button>
-                    </form>
-                <?php else: ?>
-                    <p class="text-muted mb-0">
-                        <?php if (isSuperAdmin()): ?>
-                            No admins available for assignment.
-                        <?php else: ?>
-                            No Regular Admins available. Only Super Admins can assign to Super Admins.
-                        <?php endif; ?>
-                    </p>
-                <?php endif; ?>
-            </div>
+            <?php if (!empty($complaint['user_rating'])): ?>
+<div class="mb-3">
+    <strong>User Satisfaction:</strong>
+    <div class="mt-2">
+        <div style="color: #ffc107; font-size: 1.2rem;">
+            <?php 
+            for ($i = 1; $i <= 5; $i++) {
+                echo $i <= $complaint['user_rating'] 
+                    ? '<i class="bi bi-star-fill"></i>' 
+                    : '<i class="bi bi-star"></i>';
+            }
+            ?>
+            <span class="ms-2" style="color: #333; font-size: 0.9rem;">
+                <?php echo $complaint['user_rating']; ?>/5
+            </span>
         </div>
-        <?php else: ?>
-        <div class="card mt-3">
-            <div class="card-header bg-light">
-                <i class="bi bi-person-check"></i> Assignment
-            </div>
-            <div class="card-body">
-                <p class="text-muted mb-0">
-                    <i class="bi bi-info-circle"></i> This complaint is assigned to you. Only Super Admin can reassign complaints.
+        <?php if (!empty($complaint['user_feedback'])): ?>
+            <div class="alert alert-light mt-2 mb-0">
+                <small><strong>User Feedback:</strong></small>
+                <p class="mb-0 mt-1" style="font-size: 0.9rem;">
+                    <?php echo nl2br(htmlspecialchars($complaint['user_feedback'])); ?>
                 </p>
             </div>
-        </div>
         <?php endif; ?>
+    </div>
+</div>
+<?php endif; ?>
+        </div>
+        
 
+<!-- Assign/Reassign Complaint -->
+<?php if (isSuperAdmin() && $complaint['status'] !== 'Closed'): ?>
+<div class="card mt-3 <?php echo $complaint['approval_status'] !== 'approved' ? 'border-warning' : ''; ?>">
+    <div class="card-header <?php echo $complaint['approval_status'] !== 'approved' ? 'bg-warning text-dark' : 'bg-light'; ?>">
+        <i class="bi bi-person-check"></i> 
+        <?php echo !empty($complaint['assigned_to']) ? 'Reassign Complaint' : 'Assign Complaint'; ?>
+        <?php if ($complaint['approval_status'] !== 'approved'): ?>
+            <i class="bi bi-lock-fill float-end"></i>
+        <?php endif; ?>
+    </div>
+    
+    <!-- Approval Warning Alert -->
+    <?php if ($complaint['approval_status'] !== 'approved'): ?>
+        <div class="alert alert-warning m-3 mb-0 border-0">
+            <h6 class="alert-heading">
+                <i class="bi bi-exclamation-triangle-fill"></i> Cannot Assign Yet
+            </h6>
+            <p class="mb-2">
+                <?php
+                if ($complaint['approval_status'] === 'pending_review') {
+                    echo 'This complaint is <strong>pending review</strong>. You must approve it before assignment.';
+                } elseif ($complaint['approval_status'] === 'rejected') {
+                    echo 'This complaint has been <strong>rejected</strong> and cannot be assigned.';
+                } elseif ($complaint['approval_status'] === 'changes_requested') {
+                    echo 'Waiting for user to <strong>make requested changes</strong> and resubmit.';
+                }
+                ?>
+            </p>
+            <?php if ($complaint['approval_status'] === 'pending_review'): ?>
+                <hr>
+                <a href="review_complaints.php?filter=pending_review" class="btn btn-warning btn-sm">
+                    <i class="bi bi-shield-check"></i> Go to Review Complaints
+                </a>
+            <?php endif; ?>
+        </div>
+    <?php endif; ?>
+    
+    <div class="card-body" <?php echo $complaint['approval_status'] !== 'approved' ? 'style="opacity: 0.5; pointer-events: none;"' : ''; ?>>
+        <?php if ($admins->num_rows > 0): ?>
+            <?php 
+            // Check if this would be a reassignment
+            $is_reassignment = !empty($complaint['assigned_to']); 
+            ?>
+            
+            <?php if ($is_reassignment): ?>
+                <div class="alert alert-warning mb-3">
+                    <i class="bi bi-exclamation-triangle"></i> 
+                    <strong>Reassignment Notice:</strong>
+                    <p class="mb-1 mt-2">
+                        Currently assigned to: <strong><?php echo htmlspecialchars($complaint['assigned_admin_name']); ?></strong>
+                    </p>
+                    <small class="text-muted">
+                        Reassigning will notify both the old and new admin, and the user.
+                    </small>
+                </div>
+            <?php endif; ?>
+            
+            <form method="POST" action="">
+                <div class="mb-3">
+                    <label for="assigned_to" class="form-label">
+                        <?php echo $is_reassignment ? 'Reassign to Admin' : 'Assign to Admin'; ?>
+                    </label>
+                    <select class="form-select" id="assigned_to" name="assigned_to" required>
+                        <option value="">-- Select Admin --</option>
+                        <?php 
+                        // Reset the result pointer
+                        $admins->data_seek(0);
+                        while ($admin = $admins->fetch_assoc()): 
+                        ?>
+                            <option value="<?php echo $admin['user_id']; ?>" 
+                                <?php echo $complaint['assigned_to'] == $admin['user_id'] ? 'selected' : ''; ?>>
+                                <?php echo htmlspecialchars($admin['full_name']); ?>
+                                <?php if ($admin['admin_level'] == 'super_admin'): ?>
+                                    (Super Admin)
+                                <?php endif; ?>
+                            </option>
+                        <?php endwhile; ?>
+                    </select>
+                </div>
+                
+                <?php if ($is_reassignment): ?>
+                    <!-- Reassignment Reason (REQUIRED for reassignments) -->
+                    <div class="mb-3">
+                        <label for="reassignment_reason" class="form-label">
+                            Reassignment Reason <span class="text-danger">*</span>
+                        </label>
+                        <textarea class="form-control" id="reassignment_reason" 
+                                  name="reassignment_reason" rows="3" required
+                                  placeholder="Why are you reassigning this complaint?"></textarea>
+                        <small class="text-muted">
+                            <i class="bi bi-info-circle"></i> Both admins and the user will see this reason.
+                        </small>
+                    </div>
+                <?php else: ?>
+                    <!-- Assignment Note (OPTIONAL for first assignment) -->
+                    <div class="mb-3">
+                        <label for="assignment_note" class="form-label">Assignment Note (Optional)</label>
+                        <textarea class="form-control" id="assignment_note" 
+                                  name="assignment_note" rows="2"
+                                  placeholder="Any special instructions for the admin?"></textarea>
+                    </div>
+                <?php endif; ?>
+                
+                <button type="submit"
+        name="assign_admin"
+        class="btn btn-info btn-sm w-100"
+        <?php echo $complaint['approval_status'] !== 'approved' ? 'disabled title="Approve complaint first"' : ''; ?>>
+    <i class="bi bi-person-<?php echo $is_reassignment ? 'dash' : 'plus'; ?>"></i>
+    <?php echo $is_reassignment ? 'Reassign Complaint' : 'Assign Complaint'; ?>
+</button>
+                <?php if ($complaint['reassignment_count'] > 0): ?>
+                    <div class="mt-3 text-center">
+                        <small class="text-muted">
+                            <i class="bi bi-arrow-repeat"></i> 
+                            This complaint has been reassigned <strong><?php echo $complaint['reassignment_count']; ?></strong> time(s)
+                        </small>
+                    </div>
+                <?php endif; ?>
+            </form>
+        <?php else: ?>
+            <p class="text-muted mb-0">No admins available for assignment.</p>
+           <?php endif; ?>
+    </div>
+</div>
+
+       
         <!-- Quick Actions -->
         <div class="card mt-3">
             <div class="card-header bg-light">
@@ -593,7 +1129,106 @@ include '../includes/navbar.php';
                 </div>
             </div>
         </div>
+
+        <!-- Lock/Unlock Complaint (Super Admin Only) -->
+<?php if (isSuperAdmin()): ?>
+<div class="card mt-3 <?php echo $complaint['is_locked'] ? 'border-danger' : 'border-warning'; ?>">
+    <div class="card-header <?php echo $complaint['is_locked'] ? 'bg-danger text-white' : 'bg-warning text-dark'; ?>">
+        <i class="bi bi-<?php echo $complaint['is_locked'] ? 'lock-fill' : 'shield-lock'; ?>"></i> 
+        <?php echo $complaint['is_locked'] ? 'Locked Complaint' : 'Lock Complaint'; ?>
     </div>
+    <div class="card-body">
+        <?php if ($complaint['is_locked']): ?>
+            <!-- Currently Locked -->
+            <div class="alert alert-light mb-3">
+                <small>
+                    <strong>Locked by:</strong> <?php echo htmlspecialchars($complaint['locked_by_name']); ?><br>
+                    <strong>Date:</strong> <?php echo formatDateTime($complaint['locked_at']); ?><br>
+                    <strong>Reason:</strong> <?php echo htmlspecialchars($complaint['lock_reason']); ?>
+                </small>
+            </div>
+            
+            <form method="POST" action="" onsubmit="return confirm('Are you sure you want to unlock this complaint? It will allow modifications again.');">
+                <input type="hidden" name="lock_action" value="unlock">
+                
+                <div class="mb-3">
+                    <label for="lock_reason" class="form-label">Unlock Reason (Optional)</label>
+                    <input type="text" class="form-control" id="lock_reason" name="lock_reason" 
+                           placeholder="Why are you unlocking this?">
+                </div>
+                
+                <button type="submit" name="toggle_lock" class="btn btn-success w-100">
+                    <i class="bi bi-unlock"></i> Unlock Complaint
+                </button>
+            </form>
+        <?php else: ?>
+            <!-- Not Locked -->
+            <p class="text-muted mb-3" style="font-size: 0.9rem;">
+                Lock this complaint to prevent any modifications by anyone (including you) until unlocked.
+            </p>
+            
+            <form method="POST" action="" onsubmit="return confirm('Are you sure you want to lock this complaint? No one will be able to modify it until you unlock it.');">
+                <input type="hidden" name="lock_action" value="lock">
+                
+                <div class="mb-3">
+                    <label for="lock_reason" class="form-label">Lock Reason <span class="text-danger">*</span></label>
+                    <textarea class="form-control" id="lock_reason" name="lock_reason" rows="3" 
+                              placeholder="Why are you locking this complaint?" required></textarea>
+                    <small class="text-muted">This will be visible in the complaint history.</small>
+                </div>
+                
+                <button type="submit" name="toggle_lock" class="btn btn-danger w-100">
+                    <i class="bi bi-lock"></i> Lock Complaint
+                </button>
+            </form>
+        <?php endif; ?>
+    </div>
+</div>
+<?php endif; ?>
+        <?php
+// Check for pending reopen requests
+$pending_reopen = getPendingReopenRequest($complaint_id);
+if ($pending_reopen):
+?>
+<div class="card mt-3 border-warning">
+    <div class="card-header bg-warning text-dark">
+        <i class="bi bi-exclamation-triangle"></i> Reopen Request Pending
+    </div>
+    <div class="card-body">
+        <p><strong>User Request:</strong></p>
+        <div class="alert alert-light">
+            <small><?php echo nl2br(htmlspecialchars($pending_reopen['reason'])); ?></small>
+        </div>
+        <p class="text-muted mb-3">
+            <small>Requested by: <?php echo htmlspecialchars($pending_reopen['requester_name']); ?><br>
+            Date: <?php echo formatDateTime($pending_reopen['created_at']); ?></small>
+        </p>
+        
+        <form method="POST" action="">
+            <input type="hidden" name="reopen_id" value="<?php echo $pending_reopen['reopen_id']; ?>">
+            
+            <div class="mb-3">
+                <label for="review_note" class="form-label">Admin Response</label>
+                <textarea class="form-control" id="review_note" name="review_note" rows="3" 
+                          placeholder="Provide feedback to the user..." required></textarea>
+            </div>
+            
+            <div class="d-grid gap-2">
+                <button type="submit" name="approve_reopen" class="btn btn-success btn-sm">
+                    <i class="bi bi-check-circle"></i> Approve & Reopen
+                </button>
+                <button type="submit" name="reject_reopen" class="btn btn-danger btn-sm">
+                    <i class="bi bi-x-circle"></i> Reject Request
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+<?php endif; ?>
+    </div>
+
+<?php endif; ?>
+
 </div>
 
 </div> <!-- End page-content -->

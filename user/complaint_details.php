@@ -19,9 +19,12 @@ $page_title = "Complaint Details";
 $user_id = $_SESSION['user_id'];
 $complaint_id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
 
+$error = '';
+$success = '';
+
 // Fetch complaint details
 $stmt = $conn->prepare("
-    SELECT c.*, cat.category_name, u.full_name as admin_name
+    SELECT c.*, cat.category_name, u.full_name as admin_name, u.email as admin_email
     FROM complaints c
     LEFT JOIN categories cat ON c.category_id = cat.category_id
     LEFT JOIN users u ON c.assigned_to = u.user_id
@@ -38,24 +41,188 @@ if ($result->num_rows === 0) {
 
 $complaint = $result->fetch_assoc();
 
+// Handle user confirmation for resolved complaints
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['confirm_resolved'])) {
+    $confirmation_action = sanitizeInput($_POST['confirmation_action']);
+    
+    if ($complaint['status'] !== 'Resolved') {
+        $error = 'This complaint is not in Resolved status.';
+    } else {
+        if ($confirmation_action === 'confirm') {
+            // User confirms - close the complaint
+            $stmt = $conn->prepare("
+                UPDATE complaints 
+                SET status = 'Closed', 
+                    user_confirmed_resolved = 1,
+                    updated_date = NOW() 
+                WHERE complaint_id = ?
+            ");
+            $stmt->bind_param("i", $complaint_id);
+            
+            if ($stmt->execute()) {
+                // Log to history
+                $stmt = $conn->prepare("
+                    INSERT INTO complaint_history 
+                    (complaint_id, changed_by, old_status, new_status, comment) 
+                    VALUES (?, ?, 'Resolved', 'Closed', 'User confirmed resolution')
+                ");
+                $stmt->bind_param("ii", $complaint_id, $user_id);
+                $stmt->execute();
+                
+            // Notify assigned admin first (with rating if exists)
+if (!empty($complaint['assigned_to'])) {
+    notifyResolutionConfirmed(
+        $complaint['assigned_to'],
+        $complaint_id,
+        $_SESSION['full_name'],
+        $complaint['user_rating'] ?? null
+    );
+}
+
+// Notify super admins
+$super_admins = $conn->query("SELECT user_id FROM users WHERE role = 'admin' AND admin_level = 'super_admin' AND status = 'active'");
+while ($admin = $super_admins->fetch_assoc()) {
+    if ($admin['user_id'] != $complaint['assigned_to']) {
+        notifyResolutionConfirmed(
+            $admin['user_id'],
+            $complaint_id,
+            $_SESSION['full_name'],
+            $complaint['user_rating'] ?? null
+        );
+    }
+}
+                
+                $success = 'Thank you! Your complaint has been marked as closed.';
+                
+                // Refresh complaint data
+                $stmt = $conn->prepare("
+                    SELECT c.*, cat.category_name, u.full_name as admin_name, u.email as admin_email
+                    FROM complaints c
+                    LEFT JOIN categories cat ON c.category_id = cat.category_id
+                    LEFT JOIN users u ON c.assigned_to = u.user_id
+                    WHERE c.complaint_id = ? AND c.user_id = ?
+                ");
+                $stmt->bind_param("ii", $complaint_id, $user_id);
+                $stmt->execute();
+                $complaint = $stmt->get_result()->fetch_assoc();
+            } else {
+                $error = 'Failed to update complaint status.';
+            }
+            
+       } else if ($confirmation_action === 'reopen') {
+    // User wants to reopen
+    $reopen_reason = sanitizeInput($_POST['reopen_reason']);
+    
+    if (empty($reopen_reason)) {
+        $error = 'Please provide a reason for reopening.';
+    } else {
+        // Create reopen request instead of directly reopening
+        $result = createReopenRequest($complaint_id, $user_id, $reopen_reason);
+        
+        if ($result['success']) {
+          // Notify assigned admin with enhanced notification
+if (!empty($complaint['assigned_to'])) {
+    notifyReopenRequest(
+        $complaint['assigned_to'],
+        $complaint_id,
+        $_SESSION['full_name'],
+        $reopen_reason
+    );
+}
+
+// Notify super admins
+$super_admins = $conn->query("SELECT user_id FROM users WHERE role = 'admin' AND admin_level = 'super_admin' AND status = 'active'");
+while ($admin = $super_admins->fetch_assoc()) {
+    if ($admin['user_id'] != $complaint['assigned_to']) {
+        notifyReopenRequest(
+            $admin['user_id'],
+            $complaint_id,
+            $_SESSION['full_name'],
+            $reopen_reason
+        );
+    }
+}
+            
+            $success = 'Your reopen request has been submitted. An admin will review it shortly.';
+            
+            // Refresh page
+            header("Location: complaint_details.php?id=$complaint_id");
+            exit();
+        } else {
+            $error = $result['message'];
+        }
+    }
+}
+    }
+}
+
+
+// Handle user satisfaction rating
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['submit_rating'])) {
+    $rating = (int)$_POST['rating'];
+    $feedback = sanitizeInput($_POST['feedback'] ?? '');
+    
+    if ($complaint['status'] !== 'Closed') {
+        $error = 'You can only rate closed complaints.';
+    } elseif ($complaint['approval_status'] !== 'approved') {
+        $error = 'This complaint cannot be rated because it was not approved.';
+    } elseif ($rating < 1 || $rating > 5) {
+        $error = 'Please select a valid rating (1-5 stars).';
+    } else {
+        $result = saveUserRating($complaint_id, $user_id, $rating, $feedback);
+        
+        if ($result['success']) {
+            $success = $result['message'];
+            
+            // Refresh complaint data to show rating
+            $stmt = $conn->prepare("
+                SELECT c.*, cat.category_name, u.full_name as admin_name, u.email as admin_email
+                FROM complaints c
+                LEFT JOIN categories cat ON c.category_id = cat.category_id
+                LEFT JOIN users u ON c.assigned_to = u.user_id
+                WHERE c.complaint_id = ? AND c.user_id = ?
+            ");
+            $stmt->bind_param("ii", $complaint_id, $user_id);
+            $stmt->execute();
+            $complaint = $stmt->get_result()->fetch_assoc();
+        } else {
+            $error = $result['message'];
+        }
+    }
+}
+
+
 // Handle comment submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_comment'])) {
     $comment_text = sanitizeInput($_POST['comment']);
     
     $result = addComment($complaint_id, $user_id, $comment_text);
     
-    if ($result['success']) {
-        // Notify admin if user posted
-        $admins = $conn->query("SELECT user_id FROM users WHERE role = 'admin' AND status = 'active'");
-        while ($admin = $admins->fetch_assoc()) {
-            createNotification(
-                $admin['user_id'], 
-                "New Comment on Complaint #$complaint_id",
-                $_SESSION['full_name'] . " added a comment: " . substr($comment_text, 0, 100) . "...",
-                'info',
-                $complaint_id
+  if ($result['success']) {
+    // Notify assigned admin with enhanced notification
+    if (!empty($complaint['assigned_to'])) {
+        notifyComment(
+            $complaint['assigned_to'],
+            $complaint_id,
+            $_SESSION['full_name'],
+            $comment_text,
+            false // is_admin_comment = false (user commenting)
+        );
+    }
+    
+    // Also notify super admins
+    $super_admins = $conn->query("SELECT user_id FROM users WHERE role = 'admin' AND admin_level = 'super_admin' AND status = 'active'");
+    while ($admin = $super_admins->fetch_assoc()) {
+        if ($admin['user_id'] != $complaint['assigned_to']) {
+            notifyComment(
+                $admin['user_id'],
+                $complaint_id,
+                $_SESSION['full_name'],
+                $comment_text,
+                false // is_admin_comment
             );
         }
+    }
         
         $success = $result['message'];
         header("Location: complaint_details.php?id=$complaint_id#comments");
@@ -99,18 +266,46 @@ include '../includes/navbar.php';
     </div>
 </div>
 
+<?php if (!empty($error)): ?>
+    <div class="alert alert-danger alert-dismissible fade show" role="alert">
+        <i class="bi bi-exclamation-triangle me-2"></i><?php echo $error; ?>
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+<?php endif; ?>
+
+<?php if (!empty($success)): ?>
+    <div class="alert alert-success alert-dismissible fade show" role="alert">
+        <i class="bi bi-check-circle me-2"></i><?php echo $success; ?>
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+<?php endif; ?>
+
 <div class="row">
     <!-- Complaint Details -->
     <div class="col-lg-8">
         <div class="card">
             <div class="card-header">
-                <div class="d-flex justify-content-between align-items-center">
-                    <span><i class="bi bi-file-text"></i> Complaint #<?php echo $complaint['complaint_id']; ?></span>
-                    <span class="<?php echo getStatusBadge($complaint['status']); ?>">
-                        <?php echo $complaint['status']; ?>
-                    </span>
-                </div>
-            </div>
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+        <span><i class="bi bi-file-text"></i> Complaint #<?php echo $complaint['complaint_id']; ?></span>
+        <div class="d-flex gap-2">
+            <!-- Approval Status Badge -->
+            <?php
+            $approval_badges = [
+                'pending_review' => '<span class="badge bg-warning text-dark"><i class="bi bi-hourglass-split"></i> Pending Review</span>',
+                'approved' => '<span class="badge bg-success"><i class="bi bi-check-circle-fill"></i> Approved</span>',
+                'rejected' => '<span class="badge bg-danger"><i class="bi bi-x-circle-fill"></i> Rejected</span>',
+                'changes_requested' => '<span class="badge bg-info"><i class="bi bi-pencil-square"></i> Changes Needed</span>'
+            ];
+            echo $approval_badges[$complaint['approval_status']] ?? '';
+            ?>
+            
+            <!-- Status Badge -->
+            <span class="<?php echo getStatusBadge($complaint['status']); ?>">
+                <?php echo $complaint['status']; ?>
+            </span>
+        </div>
+    </div>
+</div>
             <div class="card-body">
                 <h4 class="mb-3"><?php echo htmlspecialchars($complaint['subject']); ?></h4>
                 
@@ -128,12 +323,46 @@ include '../includes/navbar.php';
                         </span>
                     </div>
                 </div>
+                <!-- Approval Status Alert -->
+<?php if ($complaint['approval_status'] === 'pending_review'): ?>
+    <div class="alert alert-warning border-warning">
+        <h5><i class="bi bi-hourglass-split"></i> Pending Review</h5>
+        <p class="mb-0">Your complaint is awaiting admin review. You'll be notified once it's been approved.</p>
+    </div>
+<?php elseif ($complaint['approval_status'] === 'changes_requested'): ?>
+    <div class="alert alert-info border-info">
+        <h5><i class="bi bi-pencil-square"></i> Changes Requested</h5>
+        <p><strong>Admin Feedback:</strong></p>
+        <div class="alert alert-light">
+            <?php echo nl2br(htmlspecialchars($complaint['rejection_reason'])); ?>
+        </div>
+        <a href="edit_complaint.php?id=<?php echo $complaint_id; ?>" class="btn btn-info">
+            <i class="bi bi-pencil"></i> Edit & Resubmit
+        </a>
+    </div>
+<?php elseif ($complaint['approval_status'] === 'rejected'): ?>
+    <div class="alert alert-danger border-danger">
+        <h5><i class="bi bi-x-circle"></i> Complaint Rejected</h5>
+        <p><strong>Rejection Reason:</strong></p>
+        <div class="alert alert-light">
+            <?php echo nl2br(htmlspecialchars($complaint['rejection_reason'])); ?>
+        </div>
+        <p class="mb-0">
+            <small class="text-muted">
+                <i class="bi bi-info-circle"></i> You can edit and resubmit if you address the concerns above.
+            </small>
+        </p>
+        <a href="edit_complaint.php?id=<?php echo $complaint_id; ?>" class="btn btn-danger">
+            <i class="bi bi-pencil"></i> Edit & Resubmit
+        </a>
+    </div>
+<?php endif; ?>
 
                 <div class="mb-3">
                     <strong>Description:</strong>
-                   <p class="mt-2 complaint-description" style="white-space: pre-wrap; padding: 15px; border-radius: 5px;">
-    <?php echo htmlspecialchars($complaint['description']); ?>
-</p>
+                    <p class="mt-2 complaint-description" style="white-space: pre-wrap; background: #f8f9fa; padding: 15px; border-radius: 5px;">
+                        <?php echo htmlspecialchars($complaint['description']); ?>
+                    </p>
                 </div>
 
                 <?php if ($attachments->num_rows > 0): ?>
@@ -184,17 +413,337 @@ include '../includes/navbar.php';
                 </div>
                 <?php endif; ?>
 
-                <?php if ($complaint['status'] === 'Resolved' || $complaint['status'] === 'Closed'): ?>
-                <div class="alert alert-success">
-                    <i class="bi bi-check-circle"></i> 
-                    This complaint has been <?php echo strtolower($complaint['status']); ?>.
-                    <?php if (!empty($complaint['resolved_date'])): ?>
-                        <br><small>Resolved on: <?php echo formatDateTime($complaint['resolved_date']); ?></small>
-                    <?php endif; ?>
+                <!-- Status-specific messages with actions -->
+                <?php if ($complaint['status'] === 'Resolved' && $complaint['user_confirmed_resolved'] == 0): ?>
+                    <!-- User Confirmation Required -->
+                    <div class="card border-success mb-3">
+                        <div class="card-header bg-success text-white">
+                            <i class="bi bi-check-circle"></i> <strong>Complaint Resolved - Your Confirmation Needed</strong>
+                        </div>
+                        <div class="card-body">
+                            <p class="mb-3">
+                                <strong>Great news!</strong> The admin has marked your complaint as resolved. 
+                                <?php if (!empty($complaint['resolved_date'])): ?>
+                                    <br><small class="text-muted">Resolved on: <?php echo formatDateTime($complaint['resolved_date']); ?></small>
+                                <?php endif; ?>
+                            </p>
+                            
+                            <div class="alert alert-info">
+                                <i class="bi bi-info-circle"></i> 
+                                <strong>Please confirm:</strong> Is your issue completely resolved?
+                            </div>
+                            
+                         <form method="POST" action="" id="confirmationForm">
+    <div class="d-flex gap-3 mb-3">
+        <button type="button" class="btn btn-success flex-fill" onclick="confirmResolution()">
+            <i class="bi bi-check-circle"></i> Yes, Issue is Resolved
+        </button>
+        <button type="button" class="btn btn-warning flex-fill" onclick="showReopenForm()">
+            <i class="bi bi-arrow-counterclockwise"></i> No, Need to Reopen
+        </button>
+    </div>
+    
+    <!-- Hidden fields for confirmation -->
+    <input type="hidden" name="confirmation_action" id="confirmation_action" value="">
+    <input type="hidden" name="confirm_resolved" value="1">
+    
+    <!-- Reopen reason (hidden by default) -->
+    <div id="reopenReasonDiv" style="display: none;">
+        <div class="mb-3">
+            <label for="reopen_reason" class="form-label">
+                <strong>Why do you need to reopen?</strong> 
+                <span class="text-danger">*</span>
+            </label>
+            <textarea class="form-control" id="reopen_reason" name="reopen_reason" rows="4" 
+                      placeholder="Please explain why the issue is not resolved..."></textarea>
+            <small class="text-muted">Be specific so the admin can help you better.</small>
+        </div>
+        <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-warning">
+                <i class="bi bi-send"></i> Submit Reopen Request
+            </button>
+            <button type="button" class="btn btn-outline-secondary" onclick="hideReopenForm()">
+                Cancel
+            </button>
+        </div>
+    </div>
+</form>
+                        </div>
+                    </div>
+
+              <?php elseif ($complaint['status'] === 'Closed'): ?>
+    <div class="alert alert-success">
+        <i class="bi bi-check-circle-fill"></i> 
+        <strong>This complaint has been closed.</strong>
+        <?php if (!empty($complaint['resolved_date'])): ?>
+            <br><small>Resolved on: <?php echo formatDateTime($complaint['resolved_date']); ?></small>
+        <?php endif; ?>
+        <?php if ($complaint['user_confirmed_resolved'] == 1): ?>
+            <br><small class="text-muted"><i class="bi bi-check2"></i> You confirmed this resolution.</small>
+        <?php endif; ?>
+    </div>
+    
+    <!-- Satisfaction Rating Section -->
+     <!-- Satisfaction Rating Section -->
+    
+    <!-- Show message for rejected complaints -->
+    <?php if ($complaint['approval_status'] === 'rejected'): ?>
+        <div class="card mt-3 border-danger">
+            <div class="card-header bg-danger text-white">
+                <i class="bi bi-x-circle-fill"></i> Complaint Rejected
+            </div>
+            <div class="card-body">
+                <div class="alert alert-light mb-3">
+                    <strong><i class="bi bi-info-circle"></i> Rejection Reason:</strong>
+                    <p class="mb-0 mt-2"><?php echo nl2br(htmlspecialchars($complaint['rejection_reason'])); ?></p>
                 </div>
+                <p class="mb-0">
+                    <i class="bi bi-info-circle"></i> This complaint was rejected and cannot be rated. 
+                    You can edit and resubmit if you address the concerns above.
+                </p>
+                <div class="mt-3">
+                    <a href="edit_complaint.php?id=<?php echo $complaint_id; ?>" class="btn btn-danger">
+                        <i class="bi bi-pencil"></i> Edit & Resubmit
+                    </a>
+                </div>
+            </div>
+        </div>
+    
+    <!-- Show message for complaints awaiting changes -->
+    <?php elseif ($complaint['approval_status'] === 'changes_requested'): ?>
+        <div class="card mt-3 border-info">
+            <div class="card-header bg-info text-white">
+                <i class="bi bi-pencil-square"></i> Changes Requested
+            </div>
+            <div class="card-body">
+                <div class="alert alert-light mb-3">
+                    <strong><i class="bi bi-info-circle"></i> Requested Changes:</strong>
+                    <p class="mb-0 mt-2"><?php echo nl2br(htmlspecialchars($complaint['rejection_reason'])); ?></p>
+                </div>
+                <p class="mb-3">
+                    <i class="bi bi-info-circle"></i> Please make the requested changes and resubmit your complaint.
+                </p>
+                <a href="edit_complaint.php?id=<?php echo $complaint_id; ?>" class="btn btn-info">
+                    <i class="bi bi-pencil"></i> Edit & Resubmit
+                </a>
+            </div>
+        </div>
+    
+    <!-- Show message for pending review -->
+    <?php elseif ($complaint['approval_status'] === 'pending_review'): ?>
+        <div class="card mt-3 border-warning">
+            <div class="card-header bg-warning text-dark">
+                <i class="bi bi-hourglass-split"></i> Pending Admin Review
+            </div>
+            <div class="card-body">
+                <p class="mb-0">
+                    <i class="bi bi-info-circle"></i> Your complaint is awaiting admin approval. 
+                    You'll be notified once it's been reviewed and approved.
+                </p>
+            </div>
+        </div>
+    <?php endif; ?>
+    
+    <!-- Rating Form (only shows if approved AND closed AND not rated) -->
+   <?php if (empty($complaint['user_rating']) && $complaint['approval_status'] === 'approved' && $complaint['status'] === 'Closed'): ?>
+        <!-- Show rating form if not rated yet -->
+        <div class="card mt-3 border-warning">
+            <div class="card-header bg-warning text-dark">
+                <i class="bi bi-star-fill"></i> Rate Your Experience
+            </div>
+            <div class="card-body">
+                <p class="mb-3">How satisfied are you with the resolution of your complaint?</p>
+                
+                <form method="POST" action="" id="ratingForm">
+                    <input type="hidden" name="rating" id="selectedRating" value="">
+                    
+                    <!-- Star Rating Buttons -->
+                    <div class="d-flex justify-content-center gap-3 mb-4">
+                        <button type="button" class="btn btn-outline-danger rating-btn" data-rating="1" 
+                                style="font-size: 1.5rem; padding: 15px 25px;">
+                            <i class="bi bi-emoji-frown"></i><br>
+                            <small style="font-size: 0.7rem;">Poor</small><br>
+                            <small style="font-size: 0.6rem;">1 ⭐</small>
+                        </button>
+                        <button type="button" class="btn btn-outline-warning rating-btn" data-rating="2"
+                                style="font-size: 1.5rem; padding: 15px 25px;">
+                            <i class="bi bi-emoji-neutral"></i><br>
+                            <small style="font-size: 0.7rem;">Fair</small><br>
+                            <small style="font-size: 0.6rem;">2 ⭐</small>
+                        </button>
+                        <button type="button" class="btn btn-outline-info rating-btn" data-rating="3"
+                                style="font-size: 1.5rem; padding: 15px 25px;">
+                            <i class="bi bi-emoji-smile"></i><br>
+                            <small style="font-size: 0.7rem;">Good</small><br>
+                            <small style="font-size: 0.6rem;">3 ⭐</small>
+                        </button>
+                        <button type="button" class="btn btn-outline-primary rating-btn" data-rating="4"
+                                style="font-size: 1.5rem; padding: 15px 25px;">
+                            <i class="bi bi-emoji-laughing"></i><br>
+                            <small style="font-size: 0.7rem;">Very Good</small><br>
+                            <small style="font-size: 0.6rem;">4 ⭐</small>
+                        </button>
+                        <button type="button" class="btn btn-outline-success rating-btn" data-rating="5"
+                                style="font-size: 1.5rem; padding: 15px 25px;">
+                            <i class="bi bi-emoji-heart-eyes"></i><br>
+                            <small style="font-size: 0.7rem;">Excellent</small><br>
+                            <small style="font-size: 0.6rem;">5 ⭐</small>
+                        </button>
+                    </div>
+                    
+                    <!-- Feedback Text Area (shown after rating selected) -->
+                    <div id="feedbackSection" style="display: none;">
+                        <div class="mb-3">
+                            <label for="feedback" class="form-label">
+                                Additional Feedback (Optional)
+                            </label>
+                            <textarea class="form-control" id="feedback" name="feedback" rows="3"
+                                      placeholder="Tell us more about your experience..."></textarea>
+                            <small class="text-muted">Your feedback helps us improve our service.</small>
+                        </div>
+                        
+                        <div class="d-flex gap-2">
+                            <button type="submit" name="submit_rating" class="btn btn-primary flex-grow-1">
+                                <i class="bi bi-send"></i> Submit Rating
+                            </button>
+                            <button type="button" class="btn btn-outline-secondary" onclick="resetRating()">
+                                <i class="bi bi-x"></i> Cancel
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <p id="ratingPrompt" class="text-center text-muted mb-0">
+                        <small>Please select a rating above</small>
+                    </p>
+                </form>
+            </div>
+        </div>
+    <?php else: ?>
+        <!-- Show submitted rating -->
+        <div class="card mt-3 border-success">
+            <div class="card-header bg-success text-white">
+                <i class="bi bi-star-fill"></i> Your Rating
+            </div>
+            <div class="card-body">
+                <div class="text-center mb-3">
+                    <div style="font-size: 2rem; color: #ffc107;">
+                        <?php 
+                        for ($i = 1; $i <= 5; $i++) {
+                            echo $i <= $complaint['user_rating'] 
+                                ? '<i class="bi bi-star-fill"></i>' 
+                                : '<i class="bi bi-star"></i>';
+                        }
+                        ?>
+                    </div>
+                    <p class="mb-1">
+                        <strong>
+                            <?php 
+                            $rating_text = [
+                                1 => 'Poor',
+                                2 => 'Fair', 
+                                3 => 'Good',
+                                4 => 'Very Good',
+                                5 => 'Excellent'
+                            ];
+                            echo $rating_text[$complaint['user_rating']] ?? 'Unknown';
+                            ?> (<?php echo $complaint['user_rating']; ?>/5)
+                        </strong>
+                    </p>
+                    <small class="text-muted">
+                        Rated on <?php echo formatDateTime($complaint['rated_at']); ?>
+                    </small>
+                </div>
+                
+                <?php if (!empty($complaint['user_feedback'])): ?>
+                    <div class="alert alert-light">
+                        <strong>Your Feedback:</strong>
+                        <p class="mb-0 mt-2"><?php echo nl2br(htmlspecialchars($complaint['user_feedback'])); ?></p>
+                    </div>
+                <?php endif; ?>
+                
+                <p class="text-center text-muted mb-0">
+                    <small><i class="bi bi-check-circle"></i> Thank you for your feedback!</small>
+                </p>
+            </div>
+        </div>
+    <?php endif; ?>
+
+                <?php elseif ($complaint['status'] === 'Assigned'): ?>
+                    <div class="alert alert-info">
+                        <i class="bi bi-person-check"></i> 
+                        <strong>Complaint Assigned</strong>
+                        <?php if (!empty($complaint['admin_name'])): ?>
+                            - Your complaint has been assigned to <strong><?php echo htmlspecialchars($complaint['admin_name']); ?></strong> for review.
+                        <?php else: ?>
+                            - Your complaint has been assigned to an admin for review.
+                        <?php endif; ?>
+                    </div>
+
+                <?php elseif ($complaint['status'] === 'In Progress'): ?>
+                    <div class="alert alert-primary">
+                        <i class="bi bi-hourglass-split"></i> 
+                        <strong>In Progress</strong> - Your complaint is currently being processed.
+                    </div>
+
+                <?php elseif ($complaint['status'] === 'On Hold'): ?>
+                    <div class="alert alert-warning">
+                        <i class="bi bi-pause-circle"></i> 
+                        <strong>On Hold</strong> - Your complaint is temporarily on hold. The admin will provide updates soon.
+                    </div>
+                
+                <?php elseif ($complaint['status'] === 'Pending'): ?>
+                    <div class="alert alert-secondary">
+                        <i class="bi bi-clock"></i> 
+                        <strong>Pending Review</strong> - Your complaint is awaiting assignment to an admin.
+                    </div>
                 <?php endif; ?>
             </div>
         </div>
+
+        <!-- Reopen Requests Section (if any exist) -->
+<?php 
+$reopen_requests = getAllReopenRequests($complaint_id);
+if ($reopen_requests->num_rows > 0): 
+?>
+<div class="card mt-3">
+    <div class="card-header bg-warning text-dark">
+        <i class="bi bi-arrow-counterclockwise"></i> Reopen Requests
+    </div>
+    <div class="card-body">
+        <?php while ($req = $reopen_requests->fetch_assoc()): ?>
+      <div class="mb-3 p-3 border rounded reopen-request-item" 
+     data-status="<?php echo $req['status']; ?>">
+    <div class="d-flex justify-content-between align-items-start mb-2">
+        <div>
+            <strong class="requester-name"><?php echo htmlspecialchars($req['requester_name']); ?></strong>
+            <span class="badge bg-<?php echo $req['status'] == 'pending' ? 'warning text-dark' : ($req['status'] == 'approved' ? 'success' : 'danger'); ?> ms-2">
+                <?php echo ucfirst($req['status']); ?>
+            </span>
+        </div>
+        <small class="text-muted request-date"><?php echo formatDateTime($req['created_at']); ?></small>
+    </div>
+    
+    <div class="mb-2 request-reason-section">
+        <strong class="reason-label">Reason:</strong>
+        <p class="mb-0 reason-text" style="white-space: pre-wrap;"><?php echo htmlspecialchars($req['reason']); ?></p>
+    </div>
+    
+    <?php if ($req['status'] != 'pending'): ?>
+    <div class="mt-2 p-2 review-section">
+        <small class="review-info">
+            <strong>Reviewed by <?php echo htmlspecialchars($req['reviewer_name']); ?></strong>
+            on <?php echo formatDateTime($req['reviewed_at']); ?>
+        </small>
+        <?php if (!empty($req['review_note'])): ?>
+            <br><small class="review-note"><?php echo htmlspecialchars($req['review_note']); ?></small>
+        <?php endif; ?>
+    </div>
+    <?php endif; ?>
+</div>
+        <?php endwhile; ?>
+    </div>
+</div>
+<?php endif; ?>
 
         <!-- Complaint History -->
         <div class="card mt-3">
@@ -247,7 +796,7 @@ include '../includes/navbar.php';
                         <?php while ($comment = $comments->fetch_assoc()): ?>
                             <div class="comment-item mb-3 p-3" style="background: <?php echo $comment['role'] == 'admin' ? '#fff3cd' : '#e3f2fd'; ?>; border-radius: 8px; border-left: 4px solid <?php echo $comment['role'] == 'admin' ? '#ffc107' : '#667eea'; ?>;">
                                 <div class="d-flex align-items-start">
-                                    <div class="user-avatar me-2" style="width: 40px; height: 40px; font-size: 1rem; background: <?php echo $comment['role'] == 'admin' ? 'linear-gradient(135deg, #ffc107 0%, #ff9800 100%)' : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'; ?>;">
+                                    <div class="user-avatar me-2" style="width: 40px; height: 40px; font-size: 1rem; background: <?php echo $comment['role'] == 'admin' ? 'linear-gradient(135deg, #ffc107 0%, #ff9800 100%)' : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'; ?>; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white;">
                                         <?php echo strtoupper(substr($comment['full_name'], 0, 1)); ?>
                                     </div>
                                     <div class="flex-grow-1">
@@ -255,9 +804,13 @@ include '../includes/navbar.php';
                                             <div>
                                                 <strong><?php echo htmlspecialchars($comment['full_name']); ?></strong>
                                                 <?php if ($comment['role'] == 'admin'): ?>
-                                                    <span class="badge bg-warning text-dark ms-1">Admin</span>
+                                                    <span class="badge bg-warning text-dark ms-1">
+                                                        <i class="bi bi-shield-check"></i> Admin
+                                                    </span>
                                                 <?php else: ?>
-                                                    <span class="badge bg-info ms-1">User</span>
+                                                    <span class="badge bg-info ms-1">
+                                                        <i class="bi bi-person"></i> You
+                                                    </span>
                                                 <?php endif; ?>
                                             </div>
                                             <small class="text-muted">
@@ -278,6 +831,7 @@ include '../includes/navbar.php';
                 <?php endif; ?>
 
                 <!-- Add Comment Form -->
+                <?php if ($complaint['status'] !== 'Closed'): ?>
                 <div class="add-comment-section">
                     <h6 class="mb-3"><i class="bi bi-plus-circle"></i> Add a Comment</h6>
                     <form method="POST" action="">
@@ -293,6 +847,11 @@ include '../includes/navbar.php';
                         </button>
                     </form>
                 </div>
+                <?php else: ?>
+                <div class="alert alert-secondary text-center">
+                    <i class="bi bi-lock"></i> This complaint is closed. Comments are disabled.
+                </div>
+                <?php endif; ?>
             </div>
         </div>
     </div>
@@ -336,7 +895,28 @@ include '../includes/navbar.php';
                 <?php if (!empty($complaint['admin_name'])): ?>
                 <div class="mb-3">
                     <strong>Assigned To:</strong>
-                    <div class="text-muted"><?php echo htmlspecialchars($complaint['admin_name']); ?></div>
+                    <div class="text-muted">
+                        <?php echo htmlspecialchars($complaint['admin_name']); ?>
+                        <?php if (!empty($complaint['assigned_at'])): ?>
+                            <br><small>Since: <?php echo formatDateTime($complaint['assigned_at']); ?></small>
+                        <?php endif; ?>
+                    </div>
+                </div>
+                <?php endif; ?>
+
+                <?php if ($complaint['status'] === 'Resolved' || $complaint['status'] === 'Closed'): ?>
+                <div class="mb-3">
+                    <strong>Resolution Time:</strong>
+                    <div class="text-muted">
+                        <?php 
+                        if (!empty($complaint['resolved_date'])) {
+                            $resolution_days = floor((strtotime($complaint['resolved_date']) - strtotime($complaint['submitted_date'])) / 86400);
+                            echo $resolution_days . ' day' . ($resolution_days != 1 ? 's' : '');
+                        } else {
+                            echo 'N/A';
+                        }
+                        ?>
+                    </div>
                 </div>
                 <?php endif; ?>
 
@@ -345,14 +925,15 @@ include '../includes/navbar.php';
                 <div class="mb-3">
                     <strong>Status Legend:</strong>
                     <div class="mt-2">
-                        <div class="mb-1"><span class="badge bg-warning text-dark">Pending</span> - Awaiting review</div>
-                        <div class="mb-1"><span class="badge bg-info text-white">In Progress</span> - Being processed</div>
+                        <div class="mb-1"><span class="badge bg-secondary">Pending</span> - Awaiting assignment</div>
+                        <div class="mb-1"><span class="badge bg-info text-white">Assigned</span> - Assigned to admin</div>
+                        <div class="mb-1"><span class="badge bg-primary">In Progress</span> - Being processed</div>
+                        <div class="mb-1"><span class="badge bg-warning text-dark">On Hold</span> - Temporarily paused</div>
                         <div class="mb-1"><span class="badge bg-success">Resolved</span> - Issue resolved</div>
-                        <div class="mb-1"><span class="badge bg-secondary">Closed</span> - Complaint closed</div>
+                        <div class="mb-1"><span class="badge bg-dark">Closed</span> - Complaint closed</div>
                     </div>
                 </div>
             </div>
-        </div>
 
         <!-- Contact Support Card -->
         <div class="card mt-3">
@@ -360,26 +941,136 @@ include '../includes/navbar.php';
                 <i class="bi bi-headset"></i> Need Help?
             </div>
             <div class="card-body">
-                <p class="mb-2"><small>If you need to follow up on this complaint:</small></p>
-                <p class="mb-0">
-                    <i class="bi bi-envelope"></i> <a href="mailto:<?php echo ADMIN_EMAIL; ?>"><?php echo ADMIN_EMAIL; ?></a>
-                </p>
-            </div>
-        </div>
-    </div>
+<p class="mb-2"><small>If you need to follow up on this complaint:</small></p>
+<?php if (!empty($complaint['admin_email'])): ?>
+<p class="mb-2">
+<i class="bi bi-person-badge"></i> <strong>Your Admin:</strong><br>
+<a href="mailto:<?php echo htmlspecialchars($complaint['admin_email']); ?>">
+<?php echo htmlspecialchars($complaint['admin_email']); ?>
+</a>
+</p>
+<?php endif; ?>
+<p class="mb-0">
+<i class="bi bi-envelope"></i> <strong>General Support:</strong><br>
+<a href="mailto:<?php echo ADMIN_EMAIL; ?>"><?php echo ADMIN_EMAIL; ?></a>
+</p>
 </div>
-
+</div>
+</div>
+</div>
 </div> <!-- End Main Content -->
+<!-- Confirmation Form Scripts -->
 
-<!-- Auto-Refresh Script -->
 <script>
+// ========================================
+// CONFIRMATION FUNCTIONS (Load First!)
+// ========================================
+function confirmResolution() {
+    if (confirm('Are you sure your issue is completely resolved? This will close the complaint.')) {
+        document.getElementById('confirmation_action').value = 'confirm';
+        document.getElementById('confirmationForm').submit();
+    }
+}
+
+function showReopenForm() {
+    document.getElementById('reopenReasonDiv').style.display = 'block';
+    document.getElementById('confirmation_action').value = 'reopen';
+    document.getElementById('reopen_reason').required = true;
+    document.getElementById('reopen_reason').focus();
+}
+
+function hideReopenForm() {
+    document.getElementById('reopenReasonDiv').style.display = 'none';
+    document.getElementById('confirmation_action').value = '';
+    document.getElementById('reopen_reason').required = false;
+    document.getElementById('reopen_reason').value = '';
+}
+
+function resetRating() {
+    const ratingButtons = document.querySelectorAll('.rating-btn');
+    const selectedRatingInput = document.getElementById('selectedRating');
+    const feedbackSection = document.getElementById('feedbackSection');
+    const ratingPrompt = document.getElementById('ratingPrompt');
+    const feedbackTextarea = document.getElementById('feedback');
+    
+    if (!ratingButtons.length) return;
+    
+    const colors = ['danger', 'warning', 'info', 'primary', 'success'];
+    ratingButtons.forEach(btn => {
+        const origRating = btn.getAttribute('data-rating');
+        btn.className = 'btn btn-outline-' + colors[origRating - 1] + ' rating-btn';
+    });
+    
+    if (selectedRatingInput) selectedRatingInput.value = '';
+    if (feedbackTextarea) feedbackTextarea.value = '';
+    if (feedbackSection) feedbackSection.style.display = 'none';
+    if (ratingPrompt) ratingPrompt.style.display = 'block';
+}
+
+// ========================================
+// RATING FUNCTIONALITY (DOMContentLoaded)
+// ========================================
+document.addEventListener('DOMContentLoaded', function() {
+    // Only initialize rating if form exists
+    const ratingForm = document.getElementById('ratingForm');
+    if (!ratingForm) {
+        console.log('Rating form not found - skipping initialization');
+        return;
+    }
+    
+    const ratingButtons = document.querySelectorAll('.rating-btn');
+    const selectedRatingInput = document.getElementById('selectedRating');
+    const feedbackSection = document.getElementById('feedbackSection');
+    const ratingPrompt = document.getElementById('ratingPrompt');
+    
+    if (!ratingButtons.length) {
+        console.log('No rating buttons found');
+        return;
+    }
+    
+    console.log('Initializing rating buttons:', ratingButtons.length);
+    
+    ratingButtons.forEach(button => {
+        button.addEventListener('click', function() {
+            const rating = this.getAttribute('data-rating');
+            const colors = ['danger', 'warning', 'info', 'primary', 'success'];
+            
+            console.log('Rating clicked:', rating);
+            
+            // Reset all buttons to outline style
+            ratingButtons.forEach(btn => {
+                const origRating = btn.getAttribute('data-rating');
+                btn.className = 'btn btn-outline-' + colors[origRating - 1] + ' rating-btn';
+            });
+            
+            // Set clicked button to solid color
+            this.className = 'btn btn-' + colors[rating - 1] + ' rating-btn';
+            
+            // Set hidden input value
+            if (selectedRatingInput) {
+                selectedRatingInput.value = rating;
+                console.log('Set rating value to:', rating);
+            }
+            
+            // Show feedback section
+            if (feedbackSection) feedbackSection.style.display = 'block';
+            if (ratingPrompt) ratingPrompt.style.display = 'none';
+        });
+    });
+    
+    console.log('Rating functionality initialized successfully');
+});
+
+// ========================================
+// AUTO-REFRESH FOR UPDATES
+// ========================================
+<?php if ($complaint['status'] !== 'Closed'): ?>
 let lastStatus = '<?php echo $complaint['status']; ?>';
 let lastResponse = <?php echo json_encode($complaint['admin_response']); ?>;
 let lastCommentCount = <?php echo $comment_count; ?>;
 let isChecking = false;
 let checkInterval;
 
-// Create status indicator
 function createStatusIndicator() {
     const indicator = document.createElement('div');
     indicator.id = 'autoRefreshIndicator';
@@ -402,7 +1093,6 @@ function createStatusIndicator() {
     indicator.innerHTML = '<i class="bi bi-arrow-repeat" style="animation: spin 1s linear infinite;"></i> Checking for updates...';
     document.body.appendChild(indicator);
     
-    // Add spinner animation
     const style = document.createElement('style');
     style.textContent = `
         @keyframes spin {
@@ -421,7 +1111,6 @@ function createStatusIndicator() {
     document.head.appendChild(style);
 }
 
-// Show/hide indicator
 function showIndicator(show = true) {
     const indicator = document.getElementById('autoRefreshIndicator');
     if (indicator) {
@@ -429,7 +1118,6 @@ function showIndicator(show = true) {
     }
 }
 
-// Show toast notification
 function showToast(message, type = 'success') {
     const toast = document.createElement('div');
     toast.style.cssText = `
@@ -456,14 +1144,12 @@ function showToast(message, type = 'success') {
     `;
     document.body.appendChild(toast);
     
-    // Auto remove after 5 seconds
     setTimeout(() => {
         toast.style.animation = 'slideOut 0.3s ease';
         setTimeout(() => toast.remove(), 300);
     }, 5000);
 }
 
-// Check for updates
 async function checkForUpdates() {
     if (isChecking) return;
     
@@ -477,30 +1163,27 @@ async function checkForUpdates() {
         if (data.success) {
             let hasChanges = false;
             
-            // Check status change
             if (data.status !== lastStatus) {
-                updateStatus(data.status, lastStatus);
+                showToast(`Status updated: ${lastStatus} → ${data.status}`, 'success');
                 lastStatus = data.status;
                 hasChanges = true;
             }
             
-            // Check admin response change
             if (data.admin_response !== lastResponse) {
-                updateAdminResponse(data.admin_response);
+                showToast('Admin added a response to your complaint!', 'info');
                 lastResponse = data.admin_response;
-                if (!hasChanges) hasChanges = true;
+                hasChanges = true;
             }
             
-            // Check new comments
             if (data.comment_count > lastCommentCount) {
                 const newCommentsCount = data.comment_count - lastCommentCount;
                 showToast(`${newCommentsCount} new comment(s) added!`, 'info');
                 lastCommentCount = data.comment_count;
-                
-                // Reload page to show new comments
-                setTimeout(() => {
-                    window.location.reload();
-                }, 2000);
+                hasChanges = true;
+            }
+            
+            if (hasChanges) {
+                setTimeout(() => window.location.reload(), 2000);
             }
         }
     } catch (error) {
@@ -511,69 +1194,10 @@ async function checkForUpdates() {
     }
 }
 
-// Update status badge
-function updateStatus(newStatus, oldStatus) {
-    const statusBadge = document.querySelector('.card-header span[class*="badge"]');
-    if (statusBadge) {
-        // Remove old classes
-        statusBadge.className = '';
-        
-        // Add new class
-        const badgeClass = {
-            'Pending': 'badge bg-warning text-dark',
-            'In Progress': 'badge bg-info text-white',
-            'Resolved': 'badge bg-success',
-            'Closed': 'badge bg-secondary'
-        };
-        statusBadge.className = badgeClass[newStatus] || 'badge bg-secondary';
-        statusBadge.textContent = newStatus;
-        
-        // Show notification
-        showToast(`Status updated: ${oldStatus} → ${newStatus}`, 'success');
-        
-        // Add pulse animation
-        statusBadge.style.animation = 'pulse 0.5s ease';
-        setTimeout(() => statusBadge.style.animation = '', 500);
-    }
-}
-
-// Update admin response
-function updateAdminResponse(newResponse) {
-    const responseAlert = document.querySelector('.alert-info');
-    
-    if (newResponse && newResponse.trim()) {
-        if (responseAlert) {
-            // Update existing response
-            const responseParagraph = responseAlert.querySelector('p');
-            if (responseParagraph) {
-                responseParagraph.textContent = newResponse;
-            }
-        } else {
-            // Create new response box
-            const descriptionDiv = document.querySelector('.mb-3:has(.complaint-description)');
-            if (descriptionDiv) {
-                const alertDiv = document.createElement('div');
-                alertDiv.className = 'alert alert-info';
-                alertDiv.innerHTML = `
-                    <strong><i class="bi bi-chat-left-text"></i> Admin Response:</strong>
-                    <p class="mb-0 mt-2" style="white-space: pre-wrap;">${newResponse}</p>
-                `;
-                descriptionDiv.insertAdjacentElement('afterend', alertDiv);
-            }
-        }
-        
-        showToast('Admin added a response to your complaint!', 'info');
-    }
-}
-
-// Initialize
 document.addEventListener('DOMContentLoaded', function() {
     createStatusIndicator();
-    
-    // Start checking every 30 seconds
     checkInterval = setInterval(checkForUpdates, 30000);
     
-    // Also check when page becomes visible (user switches back to tab)
     document.addEventListener('visibilitychange', function() {
         if (!document.hidden) {
             checkForUpdates();
@@ -581,10 +1205,72 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 });
 
-// Stop checking when leaving page
 window.addEventListener('beforeunload', function() {
     clearInterval(checkInterval);
 });
+<?php endif; ?>
+
+document.addEventListener('DOMContentLoaded', function() {
+    const complaintId = '<?php echo $complaint_id; ?>';
+    const commentCount = <?php echo $comment_count ?? 0; ?>;
+    
+    console.log(`Viewing complaint #${complaintId} with ${commentCount} comments`);
+    
+    // Get existing last seen counts
+    const lastSeenCounts = JSON.parse(localStorage.getItem('lastSeenCommentCounts') || '{}');
+    
+    // Get previous count
+    const previousCount = lastSeenCounts[complaintId] || 0;
+    
+    // Update count for this complaint
+    lastSeenCounts[complaintId] = commentCount;
+    
+    // Save back to localStorage
+    localStorage.setItem('lastSeenCommentCounts', JSON.stringify(lastSeenCounts));
+    
+    // Log the update
+    if (previousCount < commentCount) {
+        const newComments = commentCount - previousCount;
+        console.log(`✅ Marked ${commentCount} comments as seen (${newComments} were new)`);
+    } else {
+        console.log(`✅ Marked ${commentCount} comments as seen`);
+    }
+    
+    // Show a subtle notification that comments were marked as read
+    if (commentCount > 0 && previousCount < commentCount) {
+        showCommentReadNotification(commentCount - previousCount);
+    }
+});
+
+// Optional: Show brief notification that comments were marked as read
+function showCommentReadNotification(newCount) {
+    const notification = document.createElement('div');
+    notification.style.cssText = `
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 12px 20px;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        z-index: 10000;
+        font-size: 14px;
+        animation: slideInRight 0.3s ease;
+    `;
+    notification.innerHTML = `
+        <i class="bi bi-check-circle-fill"></i> 
+        ${newCount} new comment${newCount > 1 ? 's' : ''} marked as read
+    `;
+    document.body.appendChild(notification);
+    
+    // Auto remove after 3 seconds
+    setTimeout(() => {
+        notification.style.animation = 'slideOutRight 0.3s ease';
+        setTimeout(() => notification.remove(), 300);
+    }, 3000);
+}
+
 </script>
 
 <?php include '../includes/footer.php'; ?>

@@ -97,52 +97,84 @@ include '../includes/navbar.php';
                 <i class="bi bi-bell"></i> Notifications
             </div>
             <div class="card-body">
-                <?php if ($notifications->num_rows > 0): ?>
-                    <div class="list-group">
-                        <?php while ($notif = $notifications->fetch_assoc()): ?>
-                            <div class="list-group-item <?php echo $notif['is_read'] == 0 ? 'list-group-item-primary' : ''; ?>">
-                                <div class="d-flex w-100 justify-content-between align-items-start">
-                                    <div class="flex-grow-1">
-                                        <div class="d-flex align-items-center mb-2">
-                                            <?php
-                                            $icon_class = 'bi-info-circle-fill text-info';
-                                            if ($notif['type'] == 'success') $icon_class = 'bi-check-circle-fill text-success';
-                                            if ($notif['type'] == 'warning') $icon_class = 'bi-exclamation-triangle-fill text-warning';
-                                            if ($notif['type'] == 'danger') $icon_class = 'bi-x-circle-fill text-danger';
-                                            ?>
-                                            <i class="bi <?php echo $icon_class; ?> fs-4 me-2"></i>
-                                            <h5 class="mb-0"><?php echo htmlspecialchars($notif['title']); ?></h5>
-                                        </div>
-                                        
-                                        <p class="mb-2"><?php echo htmlspecialchars($notif['message']); ?></p>
-                                        
-                                        <div class="d-flex gap-3 align-items-center">
-                                            <small class="text-muted">
-                                                <i class="bi bi-clock"></i> <?php echo formatDateTime($notif['created_at']); ?>
-                                            </small>
-                                            
-                                            <?php if ($notif['complaint_id']): ?>
-                                                <a href="complaint_details.php?id=<?php echo $notif['complaint_id']; ?>" class="btn btn-sm btn-outline-primary">
-                                                    <i class="bi bi-eye"></i> View Complaint
-                                                </a>
-                                            <?php endif; ?>
-                                            
-                                            <?php if ($notif['is_read'] == 0): ?>
-                                                <a href="?read=<?php echo $notif['notification_id']; ?>" class="btn btn-sm btn-outline-success">
-                                                    <i class="bi bi-check"></i> Mark as Read
-                                                </a>
-                                            <?php endif; ?>
-                                        </div>
-                                    </div>
-                                    
-                                    <?php if ($notif['is_read'] == 0): ?>
-                                        <span class="badge bg-primary ms-2">NEW</span>
-                                    <?php endif; ?>
-                                </div>
+              <?php if ($notifications->num_rows > 0): ?>
+    <div class="list-group">
+        <?php while ($notif = $notifications->fetch_assoc()): ?>
+            <?php
+            // Parse metadata if exists
+            $metadata = !empty($notif['metadata']) ? json_decode($notif['metadata'], true) : [];
+            
+            // Get action URL
+            $action_url = $notif['action_url'];
+            if (!$action_url && $notif['complaint_id']) {
+                // Fallback if no action_url
+                $action_url = "complaint_details.php?id=" . $notif['complaint_id'];
+            }
+            ?>
+            
+            <div class="list-group-item <?php echo $notif['is_read'] == 0 ? ($is_admin ? 'list-group-item-warning' : 'list-group-item-primary') : ''; ?> notification-item">
+                <div class="d-flex w-100 justify-content-between align-items-start">
+                    <div class="flex-grow-1">
+                        <!-- Title with Icon -->
+                        <div class="d-flex align-items-center mb-2">
+                            <?php
+                            $icon_class = 'bi-info-circle-fill text-info';
+                            if ($notif['type'] == 'success') $icon_class = 'bi-check-circle-fill text-success';
+                            if ($notif['type'] == 'warning') $icon_class = 'bi-exclamation-triangle-fill text-warning';
+                            if ($notif['type'] == 'danger') $icon_class = 'bi-x-circle-fill text-danger';
+                            ?>
+                            <i class="bi <?php echo $icon_class; ?> fs-4 me-2"></i>
+                            <h5 class="mb-0"><?php echo htmlspecialchars($notif['title']); ?></h5>
+                        </div>
+                        
+                        <!-- Message with better formatting -->
+                        <p class="mb-2" style="white-space: pre-wrap;"><?php echo htmlspecialchars($notif['message']); ?></p>
+                        
+                        <!-- Metadata badges (if available) -->
+                        <?php if (!empty($metadata)): ?>
+                            <div class="mb-2">
+                                <?php if (isset($metadata['old_status']) && isset($metadata['new_status'])): ?>
+                                    <span class="badge bg-secondary me-1"><?php echo $metadata['old_status']; ?></span>
+                                    <i class="bi bi-arrow-right"></i>
+                                    <span class="badge bg-primary ms-1"><?php echo $metadata['new_status']; ?></span>
+                                <?php endif; ?>
+                                
+                                <?php if (isset($metadata['rating'])): ?>
+                                    <span class="badge bg-warning text-dark">
+                                        <?php echo str_repeat('⭐', $metadata['rating']); ?>
+                                    </span>
+                                <?php endif; ?>
                             </div>
-                        <?php endwhile; ?>
+                        <?php endif; ?>
+                        
+                        <!-- Actions -->
+                        <div class="d-flex gap-3 align-items-center flex-wrap">
+                            <small class="text-muted">
+                                <i class="bi bi-clock"></i> <?php echo formatDateTime($notif['created_at']); ?>
+                            </small>
+                            
+                            <?php if ($action_url): ?>
+                                <a href="<?php echo htmlspecialchars($action_url); ?>" class="btn btn-sm btn-outline-primary">
+                                    <i class="bi bi-eye"></i> View Details
+                                </a>
+                            <?php endif; ?>
+                            
+                            <?php if ($notif['is_read'] == 0): ?>
+                                <a href="?read=<?php echo $notif['notification_id']; ?>" class="btn btn-sm btn-outline-success">
+                                    <i class="bi bi-check"></i> Mark as Read
+                                </a>
+                            <?php endif; ?>
+                        </div>
                     </div>
-                <?php else: ?>
+                    
+                    <?php if ($notif['is_read'] == 0): ?>
+                        <span class="badge bg-<?php echo $is_admin ? 'danger' : 'primary'; ?> ms-2">NEW</span>
+                    <?php endif; ?>
+                </div>
+            </div>
+        <?php endwhile; ?>
+    </div>
+<?php else: ?>
                     <div class="text-center py-5">
                         <i class="bi bi-bell-slash" style="font-size: 4rem; color: #ddd;"></i>
                         <h5 class="mt-3 text-muted">No notifications</h5>

@@ -2,10 +2,16 @@
 // Email configuration using PHPMailer
 // Install: composer require phpmailer/phpmailer
 
+require_once __DIR__ . '/../vendor/autoload.php';
+
+$dotenv = Dotenv\Dotenv::createImmutable(dirname(__DIR__));
+$dotenv->load();
+
+
 use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\Exception;
 
-require 'vendor/autoload.php';
+
 
 function sendEmailSMTP($to, $subject, $message) {
     $mail = new PHPMailer(true);
@@ -13,15 +19,15 @@ function sendEmailSMTP($to, $subject, $message) {
     try {
         // Server settings
         $mail->isSMTP();
-        $mail->Host       = 'smtp.gmail.com';
+        $mail->Host       = $_ENV['MAIL_HOST'];
         $mail->SMTPAuth   = true;
-        $mail->Username   = 'cmsproperty278@gmail.com'; // Your Gmail
-        $mail->Password   = 'wuat cpva ncok muqw';     // Gmail App Password
+        $mail->Username   = $_ENV['MAIL_USERNAME'];
+        $mail->Password   = $_ENV['MAIL_PASSWORD'];  
         $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
-        $mail->Port       = 587;
+        $mail->Port       = $_ENV['MAIL_PORT'];
         
         // Recipients
-        $mail->setFrom('cmsproperty278@gmail.com', SITE_NAME);
+        $mail->setFrom($_ENV['MAIL_FROM'], $_ENV['MAIL_FROM_NAME']);
         $mail->addAddress($to);
         
         // Content

@@ -5,8 +5,8 @@
 
 /* ========== ROOT VARIABLES ========== */
 :root {
-  --primary-color: #667eea;
-  --secondary-color: #764ba2;
+  --primary-color: #5a5d62; /* ← Soft Charcoal for buttons */
+  --secondary-color: #6b6e73;
   --sidebar-width: 260px;
   --topnav-height: 70px;
   --success-color: #28a745;
@@ -41,26 +41,18 @@
 
 /* Dark mode colors */
 [data-theme="dark"] {
-  --light-bg: #1a1d29;
-  --dark-text: #e9ecef;
-  --bg-primary: #1a1d29;
-  --bg-secondary: #2d3748;
-  --text-primary: #e9ecef;
-  --text-secondary: #cbd5e0;
-  --border-color: #4a5568;
-  --card-bg: #2d3748;
-  --input-bg: #374151;
-  --input-border: #4a5568;
-  --box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
-  --table-hover-bg: #374151;
-  --alert-success-bg: #1e4620;
-  --alert-success-text: #86efac;
-  --alert-danger-bg: #4a1c1c;
-  --alert-danger-text: #fca5a5;
-  --alert-warning-bg: #4a3d1c;
-  --alert-warning-text: #fde047;
-  --alert-info-bg: #1c3d4a;
-  --alert-info-text: #7dd3fc;
+  --light-bg: #2b2d31; /* Soft charcoal */
+  --dark-text: #eff1f3; /* Bright gray-white */
+  --bg-primary: #2b2d31; /* Main background */
+  --bg-secondary: #3f4247; /* Secondary - medium gray */
+  --text-primary: #eff1f3; /* Main text - very light */
+  --text-secondary: #bfc3c9; /* Secondary text - medium gray */
+  --border-color: #52555a; /* Borders - mid-tone */
+  --card-bg: #3f4247; /* Cards - lighter gray */
+  --input-bg: #35383c; /* Inputs - darker gray */
+  --input-border: #52555a; /* Input borders */
+  --box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4);
+  --table-hover-bg: #52555a; /* Table hover */
 }
 
 /* Dark mode - force text colors on all elements */
@@ -487,8 +479,8 @@ a:hover {
   width: var(--sidebar-width);
   background: linear-gradient(
     180deg,
-    var(--primary-color) 0%,
-    var(--secondary-color) 100%
+    #4a4d52 0%,
+    /* ← Charcoal Gray (darker) */ #6b6e73 100% /* ← Light Charcoal (lighter) */
   );
   padding: 20px 0;
   z-index: 1000;
@@ -575,6 +567,36 @@ a:hover {
   padding: 0 10px;
 }
 
+/* Sidebar Logo Styling */
+.sidebar-brand .sidebar-logo {
+  width: 80px;
+  height: 80px;
+  object-fit: contain;
+  margin-bottom: 10px;
+  transition: transform 0.3s ease;
+  filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.2));
+}
+
+.sidebar-brand .sidebar-logo:hover {
+  transform: scale(1.05);
+}
+
+/* Responsive logo sizing */
+@media (max-width: 768px) {
+  .sidebar-brand .sidebar-logo {
+    width: 60px;
+    height: 60px;
+  }
+}
+
+.sidebar-logo {
+  filter: drop-shadow(0 0 10px rgba(255, 255, 255, 0.3));
+  transition: filter 0.3s ease;
+}
+
+.sidebar-logo:hover {
+  filter: drop-shadow(0 0 20px rgba(255, 255, 255, 0.6));
+}
 /* ========== MAIN CONTENT AREA ========== */
 .main-content {
   margin-left: var(--sidebar-width);
@@ -1415,8 +1437,14 @@ a:hover {
 /* Fix sidebar + admin panel */
 [data-theme="dark"] .sidebar,
 [data-theme="dark"] .admin-sidebar {
-  background-color: #1f2937 !important;
+  background: linear-gradient(
+    180deg,
+    #2b2d31 0%,
+    /* ← Deep Charcoal (darker) */ #3f4247 100%
+      /* ← Medium Charcoal (lighter) */
+  ) !important;
   color: var(--text-primary) !important;
+  box-shadow: 2px 0 15px rgba(0, 0, 0, 0.5) !important;
 }
 
 /* ========== FILE UPLOAD PREVIEW STYLES ========== */
@@ -1609,4 +1637,870 @@ html[data-has-notifications="true"]::before {
 
 [data-theme="dark"] .online-user-item:hover {
   background: rgba(40, 167, 69, 0.25) !important;
+}
+
+/* ========== REOPEN REQUEST HISTORY STYLES ========== */
+
+/* Light mode */
+.reopen-request-item[data-status="pending"] {
+  background: #fff3cd;
+  border-color: #ffc107;
+}
+
+.reopen-request-item[data-status="approved"] {
+  background: #d4edda;
+  border-color: #28a745;
+}
+
+.reopen-request-item[data-status="rejected"] {
+  background: #f8d7da;
+  border-color: #dc3545;
+}
+
+.reopen-request-item .requester-name,
+.reopen-request-item .reason-label {
+  color: #333;
+}
+
+.reopen-request-item .reason-text {
+  color: #555;
+}
+
+.reopen-request-item .request-date {
+  color: #6c757d;
+}
+
+.reopen-request-item .review-section {
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 5px;
+}
+
+.reopen-request-item .review-info,
+.reopen-request-item .review-note {
+  color: #555;
+}
+
+/* Dark mode */
+[data-theme="dark"] .reopen-request-item[data-status="pending"] {
+  background: rgba(255, 193, 7, 0.15) !important;
+  border-color: #ffc107 !important;
+}
+
+[data-theme="dark"] .reopen-request-item[data-status="approved"] {
+  background: rgba(40, 167, 69, 0.15) !important;
+  border-color: #28a745 !important;
+}
+
+[data-theme="dark"] .reopen-request-item[data-status="rejected"] {
+  background: rgba(220, 53, 69, 0.15) !important;
+  border-color: #dc3545 !important;
+}
+
+[data-theme="dark"] .reopen-request-item .requester-name,
+[data-theme="dark"] .reopen-request-item .reason-label {
+  color: var(--text-primary) !important;
+}
+
+[data-theme="dark"] .reopen-request-item .reason-text {
+  color: var(--text-primary) !important;
+}
+
+[data-theme="dark"] .reopen-request-item .request-date {
+  color: var(--text-secondary) !important;
+}
+
+[data-theme="dark"] .reopen-request-item .review-section {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border-radius: 5px;
+}
+
+[data-theme="dark"] .reopen-request-item .review-info,
+[data-theme="dark"] .reopen-request-item .review-note {
+  color: var(--text-primary) !important;
+}
+
+[data-theme="dark"] .reopen-request-item .review-info strong {
+  color: var(--text-primary) !important;
+}
+
+/* ============================================
+   COMMENT BADGE FIXES
+   ============================================ */
+
+/* Comment badge styling */
+.comment-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+/* Ensure proper alignment in table cells */
+td .d-flex.gap-2 {
+  gap: 8px !important;
+}
+
+/* Dark mode - make badge more visible */
+[data-theme="dark"] .comment-badge {
+  background-color: #17a2b8 !important;
+  color: white !important;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+[data-theme="dark"] .comment-badge i {
+  color: white !important;
+}
+
+/* Light mode */
+[data-theme="light"] .comment-badge {
+  background-color: #17a2b8;
+  color: white;
+}
+
+/* ============================================
+   TABLE IMPROVEMENTS
+   ============================================ */
+
+/* Better table cell alignment */
+.table td {
+  vertical-align: middle !important;
+}
+
+/* Action column specific styling */
+.table td:last-child {
+  white-space: nowrap;
+}
+
+/* Responsive button group */
+@media (max-width: 768px) {
+  .table .d-flex.gap-2 {
+    flex-direction: column;
+    gap: 4px !important;
+  }
+
+  .table .btn-sm {
+    width: 100%;
+  }
+}
+
+/* Dark mode table improvements */
+[data-theme="dark"] .table {
+  color: var(--text-primary);
+}
+
+[data-theme="dark"] .table td,
+[data-theme="dark"] .table th {
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+[data-theme="dark"] .table-hover tbody tr:hover {
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+/* ============================================
+   SMART COMMENT BADGE SYSTEM
+   ============================================ */
+
+/* Comment badge base styling */
+.comment-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  font-size: 0.85rem;
+  white-space: nowrap;
+  transition: all 0.3s ease;
+  font-weight: 600;
+}
+
+/* NEW comment badge gradient */
+.badge-new {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+  box-shadow: 0 0 10px rgba(102, 126, 234, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+/* Unread (all comments new) badge */
+.badge-unread {
+  background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%) !important;
+  box-shadow: 0 0 10px rgba(245, 87, 108, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+/* Pulse animation for new comments */
+@keyframes pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 10px rgba(102, 126, 234, 0.5);
+  }
+  50% {
+    transform: scale(1.08);
+    box-shadow: 0 0 15px rgba(102, 126, 234, 0.8);
+  }
+}
+
+/* Slide in/out animations for notification */
+@keyframes slideInRight {
+  from {
+    transform: translateX(400px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes slideOutRight {
+  from {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(400px);
+    opacity: 0;
+  }
+}
+
+/* Dark mode adjustments */
+[data-theme="dark"] .comment-badge {
+  border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+[data-theme="dark"] .badge-new {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+  color: white !important;
+}
+
+[data-theme="dark"] .badge-unread {
+  background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%) !important;
+  color: white !important;
+}
+
+/* Hover effect */
+.comment-badge:hover {
+  transform: scale(1.1);
+  cursor: default;
+}
+
+/* Table cell alignment fix */
+td .d-flex.gap-2 {
+  gap: 8px !important;
+}
+
+.table td {
+  vertical-align: middle !important;
+}
+
+/* ============================================
+   READABILITY FIXES - Light & Dark Mode
+   Added: February 2026
+   ============================================ */
+
+/* ========== FIX 1: Badge Text Readability ========== */
+
+/* Light mode - ensure dark text on light badges */
+.badge.bg-light,
+.badge.bg-white {
+  background-color: #e9ecef !important;
+  color: #212529 !important; /* Dark text */
+  border: 1px solid #dee2e6;
+}
+
+.badge.bg-warning {
+  background-color: #ffc107 !important;
+  color: #000 !important; /* Black text for contrast */
+}
+
+.badge.text-dark {
+  color: #212529 !important;
+}
+
+/* Dark mode - ensure light text on dark badges */
+[data-theme="dark"] .badge.bg-light,
+[data-theme="dark"] .badge.bg-white {
+  background-color: #4a5568 !important;
+  color: #f8f9fa !important; /* Light text */
+  border: 1px solid #6b7280;
+}
+
+[data-theme="dark"] .badge.bg-warning {
+  background-color: #fbbf24 !important;
+  color: #1f2937 !important; /* Dark text for yellow bg */
+}
+
+[data-theme="dark"] .badge.text-dark {
+  color: #f8f9fa !important; /* Override to light */
+}
+
+/* ========== FIX 2: Table Headers & Cells ========== */
+
+/* Light mode table text */
+.table thead th {
+  color: #212529 !important;
+  font-weight: 600;
+}
+
+.table tbody td {
+  color: #495057 !important;
+}
+
+/* Dark mode table text - already handled but reinforcing */
+[data-theme="dark"] .table thead th {
+  color: #f8f9fa !important;
+}
+
+[data-theme="dark"] .table tbody td {
+  color: #e9ecef !important;
+}
+
+/* ========== FIX 3: Card Headers ========== */
+
+/* Light mode card headers */
+.card-header {
+  color: #212529 !important;
+}
+
+.card-header.bg-light {
+  background-color: #f8f9fa !important;
+  color: #212529 !important;
+}
+
+.card-header.bg-primary,
+.card-header.bg-info,
+.card-header.bg-success,
+.card-header.bg-danger {
+  color: #ffffff !important; /* White text on colored backgrounds */
+}
+
+.card-header.bg-warning {
+  background-color: #ffc107 !important;
+  color: #000000 !important; /* Black text on yellow */
+}
+
+/* Dark mode card headers */
+[data-theme="dark"] .card-header {
+  color: #f8f9fa !important;
+}
+
+[data-theme="dark"] .card-header.bg-light {
+  background-color: #374151 !important;
+  color: #f8f9fa !important;
+}
+
+[data-theme="dark"] .card-header.bg-warning {
+  background-color: #fbbf24 !important;
+  color: #1f2937 !important;
+}
+
+/* ========== FIX 4: Text Utilities ========== */
+
+/* Light mode text colors */
+.text-muted {
+  color: #6c757d !important;
+}
+
+.text-dark {
+  color: #212529 !important;
+}
+
+.text-white {
+  color: #ffffff !important;
+}
+
+/* Dark mode text colors */
+[data-theme="dark"] .text-muted {
+  color: #9ca3af !important;
+}
+
+[data-theme="dark"] .text-dark {
+  color: #f8f9fa !important; /* Switch to light */
+}
+
+[data-theme="dark"] .text-white {
+  color: #f8f9fa !important;
+}
+
+/* ========== FIX 5: Form Elements ========== */
+
+/* Light mode forms */
+.form-control,
+.form-select {
+  background-color: #ffffff !important;
+  color: #212529 !important;
+  border: 1px solid #ced4da;
+}
+
+.form-control:focus,
+.form-select:focus {
+  background-color: #ffffff !important;
+  color: #212529 !important;
+}
+
+.form-control::placeholder {
+  color: #6c757d !important;
+  opacity: 0.7;
+}
+
+.form-label {
+  color: #212529 !important;
+}
+
+/* Dark mode forms */
+[data-theme="dark"] .form-control,
+[data-theme="dark"] .form-select {
+  background-color: #374151 !important;
+  color: #f8f9fa !important;
+  border: 1px solid #4b5563;
+}
+
+[data-theme="dark"] .form-control:focus,
+[data-theme="dark"] .form-select:focus {
+  background-color: #374151 !important;
+  color: #f8f9fa !important;
+  border-color: #6b7280;
+}
+
+[data-theme="dark"] .form-control::placeholder {
+  color: #9ca3af !important;
+  opacity: 0.8;
+}
+
+[data-theme="dark"] .form-label {
+  color: #f8f9fa !important;
+}
+
+/* ========== FIX 6: Dropdown & Notification Items ========== */
+
+/* Light mode dropdowns */
+.dropdown-menu {
+  background-color: #ffffff;
+  border: 1px solid #e5e7eb;
+}
+
+.dropdown-item {
+  color: #212529 !important;
+}
+
+.dropdown-item:hover {
+  background-color: #f3f4f6;
+  color: #212529 !important;
+}
+
+.dropdown-item.bg-light {
+  background-color: #f8f9fa !important;
+  color: #212529 !important;
+}
+
+/* Dark mode dropdowns */
+[data-theme="dark"] .dropdown-menu {
+  background-color: #1f2937;
+  border: 1px solid #374151;
+}
+
+[data-theme="dark"] .dropdown-item {
+  color: #f8f9fa !important;
+}
+
+[data-theme="dark"] .dropdown-item:hover {
+  background-color: #374151;
+  color: #f8f9fa !important;
+}
+
+[data-theme="dark"] .dropdown-item.bg-light {
+  background-color: #374151 !important;
+  color: #f8f9fa !important;
+}
+
+/* ========== FIX 7: Notification Dropdown Specific ========== */
+
+.notification-dropdown .dropdown-item {
+  color: #212529 !important;
+  padding: 12px 20px;
+}
+
+.notification-dropdown .dropdown-item:hover {
+  background-color: #f3f4f6;
+}
+
+.notification-dropdown .dropdown-item small {
+  color: #6c757d !important;
+}
+
+[data-theme="dark"] .notification-dropdown .dropdown-item {
+  color: #f8f9fa !important;
+}
+
+[data-theme="dark"] .notification-dropdown .dropdown-item:hover {
+  background-color: #374151;
+}
+
+[data-theme="dark"] .notification-dropdown .dropdown-item small {
+  color: #9ca3af !important;
+}
+
+/* ========== FIX 8: Alert Messages ========== */
+
+/* Light mode alerts - ensure good contrast */
+.alert-success {
+  background-color: #d1e7dd !important;
+  color: #0f5132 !important;
+  border-left-color: #198754;
+}
+
+.alert-danger {
+  background-color: #f8d7da !important;
+  color: #842029 !important;
+  border-left-color: #dc3545;
+}
+
+.alert-warning {
+  background-color: #fff3cd !important;
+  color: #664d03 !important;
+  border-left-color: #ffc107;
+}
+
+.alert-info {
+  background-color: #cff4fc !important;
+  color: #055160 !important;
+  border-left-color: #0dcaf0;
+}
+
+/* Dark mode alerts - keep existing vars but ensure text is visible */
+[data-theme="dark"] .alert-success {
+  background-color: #1e4620 !important;
+  color: #86efac !important;
+}
+
+[data-theme="dark"] .alert-danger {
+  background-color: #4a1c1c !important;
+  color: #fca5a5 !important;
+}
+
+[data-theme="dark"] .alert-warning {
+  background-color: #4a3d1c !important;
+  color: #fde047 !important;
+}
+
+[data-theme="dark"] .alert-info {
+  background-color: #1c3d4a !important;
+  color: #7dd3fc !important;
+}
+
+/* ========== FIX 9: Button Text ========== */
+
+/* Ensure buttons have proper text color */
+.btn-primary,
+.btn-success,
+.btn-danger,
+.btn-info {
+  color: #ffffff !important;
+}
+
+.btn-warning,
+.btn-light {
+  color: #000000 !important;
+}
+
+.btn-outline-primary,
+.btn-outline-success,
+.btn-outline-danger,
+.btn-outline-info,
+.btn-outline-warning {
+  background-color: transparent;
+}
+
+[data-theme="dark"] .btn-outline-primary,
+[data-theme="dark"] .btn-outline-success,
+[data-theme="dark"] .btn-outline-danger,
+[data-theme="dark"] .btn-outline-info {
+  color: #f8f9fa !important;
+}
+
+[data-theme="dark"] .btn-outline-warning {
+  color: #fde047 !important;
+}
+
+/* ========== FIX 10: Sidebar Menu Items ========== */
+
+.sidebar-menu a {
+  color: rgba(255, 255, 255, 0.9) !important;
+}
+
+.sidebar-menu a:hover,
+.sidebar-menu a.active {
+  color: #ffffff !important;
+}
+
+.sidebar-menu a i {
+  color: rgba(255, 255, 255, 0.85) !important;
+}
+
+/* ========== FIX 11: Stats Cards ========== */
+
+.stats-card h3,
+.stats-card .h3 {
+  color: var(--text-primary) !important;
+}
+
+.stats-card small,
+.stats-card .text-muted {
+  color: var(--text-secondary) !important;
+}
+
+[data-theme="dark"] .stats-card {
+  color: var(--text-primary) !important;
+}
+
+/* ========== FIX 12: Modal Content ========== */
+
+.modal-header {
+  background-color: var(--bg-secondary);
+  color: var(--text-primary) !important;
+}
+
+.modal-body {
+  background-color: var(--card-bg);
+  color: var(--text-primary) !important;
+}
+
+.modal-footer {
+  background-color: var(--bg-secondary);
+}
+
+[data-theme="dark"] .modal-header,
+[data-theme="dark"] .modal-body,
+[data-theme="dark"] .modal-footer {
+  color: var(--text-primary) !important;
+}
+
+/* ========== FIX 13: Links ========== */
+
+/* Light mode links */
+a {
+  color: #0d6efd;
+}
+
+a:hover {
+  color: #0a58ca;
+}
+
+/* Dark mode links */
+[data-theme="dark"] a:not(.btn) {
+  color: #60a5fa !important;
+}
+
+[data-theme="dark"] a:not(.btn):hover {
+  color: #93c5fd !important;
+}
+
+/* ========== FIX 14: Input Group Text ========== */
+
+.input-group-text {
+  background-color: #e9ecef;
+  color: #212529 !important;
+  border: 1px solid #ced4da;
+}
+
+[data-theme="dark"] .input-group-text {
+  background-color: #374151;
+  color: #f8f9fa !important;
+  border: 1px solid #4b5563;
+}
+
+/* ========== FIX 15: List Group Items ========== */
+
+.list-group-item {
+  background-color: #ffffff;
+  color: #212529 !important;
+  border: 1px solid #dee2e6;
+}
+
+.list-group-item:hover {
+  background-color: #f8f9fa;
+}
+
+[data-theme="dark"] .list-group-item {
+  background-color: #2d3748;
+  color: #f8f9fa !important;
+  border: 1px solid #4a5568;
+}
+
+[data-theme="dark"] .list-group-item:hover {
+  background-color: #374151;
+}
+
+/* ========== FIX 16: Breadcrumbs ========== */
+
+.breadcrumb {
+  background-color: var(--bg-secondary);
+}
+
+.breadcrumb-item {
+  color: var(--text-secondary) !important;
+}
+
+.breadcrumb-item.active {
+  color: var(--text-primary) !important;
+}
+
+.breadcrumb-item a {
+  color: var(--primary-color) !important;
+}
+
+/* ========== FIX 17: Pagination ========== */
+
+.pagination .page-link {
+  background-color: #ffffff;
+  color: #212529 !important;
+  border: 1px solid #dee2e6;
+}
+
+.pagination .page-item.active .page-link {
+  background-color: var(--primary-color);
+  color: #ffffff !important;
+}
+
+[data-theme="dark"] .pagination .page-link {
+  background-color: #2d3748;
+  color: #f8f9fa !important;
+  border: 1px solid #4a5568;
+}
+
+[data-theme="dark"] .pagination .page-item.active .page-link {
+  background-color: var(--primary-color);
+  color: #ffffff !important;
+}
+
+/* ========== FIX 18: Strong & Bold Text ========== */
+
+strong,
+b {
+  color: inherit;
+  font-weight: 600;
+}
+
+[data-theme="dark"] strong,
+[data-theme="dark"] b {
+  color: var(--text-primary) !important;
+}
+
+/* ========== FIX 19: Small Text ========== */
+
+small,
+.small {
+  color: var(--text-secondary) !important;
+}
+
+[data-theme="dark"] small,
+[data-theme="dark"] .small {
+  color: var(--text-secondary) !important;
+}
+
+/* ========== FIX 20: Code & Pre Elements ========== */
+
+code {
+  background-color: #f8f9fa;
+  color: #e83e8c;
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
+pre {
+  background-color: #f8f9fa;
+  color: #212529;
+  padding: 15px;
+  border-radius: 5px;
+}
+
+[data-theme="dark"] code {
+  background-color: #374151;
+  color: #f472b6;
+}
+
+[data-theme="dark"] pre {
+  background-color: #1f2937;
+  color: #f8f9fa;
+}
+
+/* END READABILITY FIXES */
+
+/* Review Complaints - Force badge visibility */
+.btn-group .badge {
+  display: inline-block !important;
+  opacity: 1 !important;
+  font-size: 0.85rem !important;
+  font-weight: 600 !important;
+  padding: 4px 8px !important;
+  margin-left: 6px !important;
+  vertical-align: middle !important;
+}
+
+/* Dark badge on active tab */
+.btn-warning .badge.bg-dark,
+.btn-info .badge.bg-dark,
+.btn-success .badge.bg-dark,
+.btn-danger .badge.bg-dark {
+  color: #ffffff !important;
+  background-color: #212529 !important;
+}
+
+/* Ensure contrast in dark mode */
+[data-theme="dark"] .btn-group .badge {
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+/* ============================================
+   FIX: Review Complaints Badge Visibility
+   ============================================ */
+
+/* Force badge visibility on filter tabs */
+.btn-group .badge,
+.btn-group a span {
+  display: inline-block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+  background-color: #212529 !important;
+  color: #ffffff !important;
+  padding: 4px 10px !important;
+  border-radius: 12px !important;
+  font-size: 0.85rem !important;
+  font-weight: 600 !important;
+  margin-left: 8px !important;
+  vertical-align: middle !important;
+}
+
+/* Specific overrides for review complaints page */
+.card-body .btn-group .badge,
+.card-body .btn-group a span {
+  background-color: #212529 !important;
+  color: #ffffff !important;
+}
+
+/* Override any Bootstrap defaults */
+.btn .badge {
+  background-color: #212529 !important;
+  color: #ffffff !important;
+}
+
+/* Dark mode compatibility */
+[data-theme="dark"] .btn-group .badge,
+[data-theme="dark"] .btn-group a span {
+  background-color: #f8f9fa !important;
+  color: #212529 !important;
+  border: 1px solid #dee2e6 !important;
+}
+
+/* Make sure nothing hides it */
+.badge.bg-light,
+.badge.bg-warning,
+.badge.bg-info,
+.badge.bg-success,
+.badge.bg-danger {
+  display: inline-block !important;
+  opacity: 1 !important;
+  visibility: visible !important;
 }

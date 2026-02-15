@@ -27,8 +27,32 @@ $stmt->bind_param("i", $user_id);
 $stmt->execute();
 $total_complaints = $stmt->get_result()->fetch_assoc()['total'];
 
+// Pending Review (NEW)
+$stmt = $conn->prepare("SELECT COUNT(*) as total FROM complaints WHERE user_id = ? AND approval_status = 'pending_review'");
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$pending_review = $stmt->get_result()->fetch_assoc()['total'];
+
+// Approved complaints (NEW)
+$stmt = $conn->prepare("SELECT COUNT(*) as total FROM complaints WHERE user_id = ? AND approval_status = 'approved'");
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$approved_complaints = $stmt->get_result()->fetch_assoc()['total'];
+
+// Changes Requested (NEW)
+$stmt = $conn->prepare("SELECT COUNT(*) as total FROM complaints WHERE user_id = ? AND approval_status = 'changes_requested'");
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$changes_requested = $stmt->get_result()->fetch_assoc()['total'];
+
+// Rejected (NEW)
+$stmt = $conn->prepare("SELECT COUNT(*) as total FROM complaints WHERE user_id = ? AND approval_status = 'rejected'");
+$stmt->bind_param("i", $user_id);
+$stmt->execute();
+$rejected_complaints = $stmt->get_result()->fetch_assoc()['total'];
+
 // Pending complaints
-$stmt = $conn->prepare("SELECT COUNT(*) as total FROM complaints WHERE user_id = ? AND status = 'Pending'");
+$stmt = $conn->prepare("SELECT COUNT(*) as total FROM complaints WHERE user_id = ? AND status = 'Pending' AND approval_status = 'approved'");
 $stmt->bind_param("i", $user_id);
 $stmt->execute();
 $pending_complaints = $stmt->get_result()->fetch_assoc()['total'];
@@ -45,7 +69,7 @@ $stmt->bind_param("i", $user_id);
 $stmt->execute();
 $resolved_complaints = $stmt->get_result()->fetch_assoc()['total'];
 
-// Get recent complaints
+// Get recent complaints (include approval status)
 $stmt = $conn->prepare("
     SELECT c.*, cat.category_name 
     FROM complaints c
@@ -129,6 +153,82 @@ include '../includes/navbar.php';
         </div>
     </div>
 </div>
+
+<!-- Approval Status Section (NEW) -->
+<?php if ($pending_review > 0 || $changes_requested > 0 || $rejected_complaints > 0): ?>
+<div class="row mb-4">
+    <div class="col-12">
+        <h5 class="mb-3"><i class="bi bi-shield-check"></i> Approval Status</h5>
+    </div>
+    
+    <?php if ($pending_review > 0): ?>
+    <div class="col-md-4 col-sm-6 mb-3">
+        <div class="card border-warning">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h6 class="text-muted mb-2">Pending Review</h6>
+                        <h2 class="mb-0 text-warning"><?php echo $pending_review; ?></h2>
+                        <small class="text-muted">Awaiting admin review</small>
+                    </div>
+                    <div class="text-warning" style="font-size: 3rem; opacity: 0.3;">
+                        <i class="bi bi-hourglass-split"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <?php endif; ?>
+    
+    <?php if ($changes_requested > 0): ?>
+    <div class="col-md-4 col-sm-6 mb-3">
+        <div class="card border-info">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h6 class="text-muted mb-2">Changes Requested</h6>
+                        <h2 class="mb-0 text-info"><?php echo $changes_requested; ?></h2>
+                        <small class="text-muted">Action required</small>
+                    </div>
+                    <div class="text-info" style="font-size: 3rem; opacity: 0.3;">
+                        <i class="bi bi-pencil-square"></i>
+                    </div>
+                </div>
+            </div>
+            <div class="card-footer bg-info text-white">
+                <a href="my_complaints.php?approval_status=changes_requested" class="text-white text-decoration-none">
+                    <i class="bi bi-arrow-right-circle"></i> Edit & Resubmit
+                </a>
+            </div>
+        </div>
+    </div>
+    <?php endif; ?>
+    
+    <?php if ($rejected_complaints > 0): ?>
+    <div class="col-md-4 col-sm-6 mb-3">
+        <div class="card border-danger">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <h6 class="text-muted mb-2">Rejected</h6>
+                        <h2 class="mb-0 text-danger"><?php echo $rejected_complaints; ?></h2>
+                        <small class="text-muted">View reasons</small>
+                    </div>
+                    <div class="text-danger" style="font-size: 3rem; opacity: 0.3;">
+                        <i class="bi bi-x-circle"></i>
+                    </div>
+                </div>
+            </div>
+            <div class="card-footer bg-danger text-white">
+                <a href="my_complaints.php?approval_status=rejected" class="text-white text-decoration-none">
+                    <i class="bi bi-eye"></i> View Details
+                </a>
+            </div>
+        </div>
+    </div>
+    <?php endif; ?>
+</div>
+<?php endif; ?>
 
 <!-- Daily Submission Info -->
 <div class="row mb-4">
@@ -221,6 +321,7 @@ include '../includes/navbar.php';
                                     <th>ID</th>
                                     <th>Subject</th>
                                     <th>Category</th>
+                                    <th>Approval</th>
                                     <th>Status</th>
                                     <th>Priority</th>
                                     <th>Submitted</th>
@@ -239,6 +340,22 @@ include '../includes/navbar.php';
                                             <?php echo htmlspecialchars($complaint['category_name'] ?? 'N/A'); ?>
                                         </span>
                                     </td>
+                                    <td>
+    <?php
+    $approval_badges = [
+        'pending_review' => '<span class="badge bg-warning text-dark"><i class="bi bi-hourglass"></i> Pending Review</span>',
+        'approved' => '<span class="badge bg-success"><i class="bi bi-check-circle"></i> Approved</span>',
+        'rejected' => '<span class="badge bg-danger"><i class="bi bi-x-circle"></i> Rejected</span>',
+        'changes_requested' => '<span class="badge bg-info"><i class="bi bi-pencil"></i> Changes Needed</span>'
+    ];
+    echo $approval_badges[$complaint['approval_status']] ?? '';
+    ?>
+</td>
+<td>
+    <span class="<?php echo getStatusBadge($complaint['status']); ?>">
+        <?php echo $complaint['status']; ?>
+    </span>
+</td>
                                     <td>
                                         <span class="<?php echo getStatusBadge($complaint['status']); ?>">
                                             <?php echo $complaint['status']; ?>

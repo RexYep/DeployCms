@@ -15,7 +15,6 @@ $page_title = "Create Admin Account";
 $error = '';
 $success = '';
 
-// Handle form submission
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $full_name = sanitizeInput($_POST['full_name']);
     $email = sanitizeInput($_POST['email']);
@@ -24,47 +23,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $confirm_password = $_POST['confirm_password'];
     $admin_level = sanitizeInput($_POST['admin_level']);
     
-    // Validate inputs
-    if (empty($full_name) || empty($email) || empty($password)) {
-        $error = 'All required fields must be filled';
-    } else if (!isValidEmail($email)) {
-        $error = 'Invalid email format';
-    } else if (!empty($phone) && !isValidPhone($phone)) {
-        $error = 'Invalid phone number format';
-    } else if (!isStrongPassword($password)) {
-        $error = 'Password must be at least 8 characters with uppercase, lowercase, and numbers';
-    } else if ($password !== $confirm_password) {
+    // Validate passwords match
+    if ($password !== $confirm_password) {
         $error = 'Passwords do not match';
-    } else if (!in_array($admin_level, ['super_admin', 'admin'])) {
-        $error = 'Invalid admin level';
     } else {
-        // Check if email already exists
-        $stmt = $conn->prepare("SELECT user_id FROM users WHERE email = ?");
-        $stmt->bind_param("s", $email);
-        $stmt->execute();
-        $result = $stmt->get_result();
+        // Use the new function
+        $result = createAdminAccount($full_name, $email, $phone, $password, $admin_level, $_SESSION['user_id']);
         
-        if ($result->num_rows > 0) {
-            $error = 'Email already exists in the system';
+        if ($result['success']) {
+            $success = $result['message'];
+            
+            // Clear form
+            $full_name = $email = $phone = '';
         } else {
-            // Hash password
-            $hashed_password = hashPassword($password);
-            
-            // Insert admin user
-            $stmt = $conn->prepare("INSERT INTO users (full_name, email, phone, password, role, admin_level, status) VALUES (?, ?, ?, ?, 'admin', ?, 'active')");
-            $stmt->bind_param("sssss", $full_name, $email, $phone, $hashed_password, $admin_level);
-            
-            if ($stmt->execute()) {
-                $success = 'Admin account created successfully! Login credentials have been set.';
-                // Clear form
-                $full_name = $email = $phone = '';
-            } else {
-                $error = 'Failed to create admin account. Please try again.';
-            }
+            $error = $result['message'];
         }
     }
 }
-
 // Get all admins for display
 $admins = $conn->query("SELECT user_id, full_name, email, phone, admin_level, status, created_at FROM users WHERE role = 'admin' ORDER BY created_at DESC");
 

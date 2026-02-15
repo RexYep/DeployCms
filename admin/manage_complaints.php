@@ -27,6 +27,15 @@ $where_conditions = [];
 $params = [];
 $types = "";
 
+$approval_filter = isset($_GET['approval_status']) ? sanitizeInput($_GET['approval_status']) : '';
+
+// Add to where conditions
+if (!empty($approval_filter)) {
+    $where_conditions[] = "c.approval_status = ?";
+    $params[] = $approval_filter;
+    $types .= "s";
+}
+
 // Add assignment filter for regular admins
 if (!isSuperAdmin()) {
     $where_conditions[] = "c.assigned_to = ?";
@@ -180,6 +189,25 @@ include '../includes/navbar.php';
                         </a>
                     </div>
                     <?php endif; ?>
+
+                    <div class="col-md-3">
+    <label for="approval_status" class="form-label">Approval Status</label>
+    <select class="form-select" id="approval_status" name="approval_status">
+        <option value="">All Approvals</option>
+        <option value="pending_review" <?php echo $approval_filter == 'pending_review' ? 'selected' : ''; ?>>
+            Pending Review
+        </option>
+        <option value="approved" <?php echo $approval_filter == 'approved' ? 'selected' : ''; ?>>
+            Approved
+        </option>
+        <option value="changes_requested" <?php echo $approval_filter == 'changes_requested' ? 'selected' : ''; ?>>
+            Changes Requested
+        </option>
+        <option value="rejected" <?php echo $approval_filter == 'rejected' ? 'selected' : ''; ?>>
+            Rejected
+        </option>
+    </select>
+</div>
                 </form>
             </div>
         </div>
@@ -213,6 +241,7 @@ include '../includes/navbar.php';
                                     <th>Submitted</th>
                                     <th>Days</th>
                                     <th>Action</th>
+                                    <th>Approval</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -261,11 +290,41 @@ include '../includes/navbar.php';
                                         </small>
                                     </td>
                                     <td>
-                                        <a href="complaint_details.php?id=<?php echo $complaint['complaint_id']; ?>" 
-                                           class="btn btn-sm btn-outline-primary">
-                                            <i class="bi bi-eye"></i> View
-                                        </a>
+                                        
+     <div class="btn-group" role="group">
+        <a href="complaint_details.php?id=<?php echo $complaint['complaint_id']; ?>" 
+           class="btn btn-sm btn-outline-primary" title="View Details">
+            <i class="bi bi-eye"></i>
+        </a>
+        <?php if (isSuperAdmin() && empty($complaint['assigned_to'])): ?>
+            <button type="button" class="btn btn-sm btn-outline-warning" 
+                    title="Needs Assignment" 
+                    onclick="window.location.href='complaint_details.php?id=<?php echo $complaint['complaint_id']; ?>#assign'">
+                <i class="bi bi-exclamation-triangle"></i>
+            </button>
+        <?php endif; ?>
+    </div>
+                                       
                                     </td>
+                                    <td>
+    <?php
+    $approval_badges = [
+        'pending_review' => 'badge bg-warning text-dark',
+        'approved' => 'badge bg-success',
+        'rejected' => 'badge bg-danger',
+        'changes_requested' => 'badge bg-info'
+    ];
+    $approval_text = [
+        'pending_review' => 'Pending',
+        'approved' => 'Approved',
+        'rejected' => 'Rejected',
+        'changes_requested' => 'Changes'
+    ];
+    ?>
+    <span class="<?php echo $approval_badges[$complaint['approval_status']]; ?>">
+        <?php echo $approval_text[$complaint['approval_status']]; ?>
+    </span>
+</td>
                                 </tr>
                                 <?php endwhile; ?>
                             </tbody>

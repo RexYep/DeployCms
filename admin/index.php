@@ -104,6 +104,10 @@ $trend_stats = $conn->query("
     GROUP BY DATE(submitted_date)
     ORDER BY date ASC
 ");
+// Approval statistics (NEW)
+$pending_review_count = $conn->query("SELECT COUNT(*) as count FROM complaints WHERE approval_status = 'pending_review'")->fetch_assoc()['count'];
+$changes_requested_count = $conn->query("SELECT COUNT(*) as count FROM complaints WHERE approval_status = 'changes_requested'")->fetch_assoc()['count'];
+
 
 $trend_labels = [];
 $trend_data = [];
@@ -250,6 +254,7 @@ include '../includes/navbar.php';
     </div>
 </div>
 
+
 <!-- Secondary Stats -->
 <div class="row mb-4">
     <div class="col-md-4 mb-3">
@@ -299,7 +304,67 @@ include '../includes/navbar.php';
             </div>
         </div>
     </div>
+
 </div>
+
+    <!-- Approval Queue Widget (Super Admin Only) -->
+<?php if (isSuperAdmin()): ?>
+    <?php if ($pending_review_count > 0 || $changes_requested_count > 0): ?>
+    <div class="row mt-4">
+        <div class="col-12">
+            <div class="card border-warning">
+                <div class="card-header bg-warning text-dark">
+                    <h5 class="mb-0">
+                        <i class="bi bi-exclamation-triangle-fill"></i> Action Required - Complaint Approvals
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <?php if ($pending_review_count > 0): ?>
+                        <div class="col-md-6 mb-3">
+                            <div class="d-flex align-items-center justify-content-between p-3 border rounded">
+                                <div>
+                                    <h6 class="mb-1">⏳ Pending Review</h6>
+                                    <p class="mb-0 text-muted">Complaints awaiting your approval</p>
+                                </div>
+                                <div>
+                                    <span class="badge bg-warning text-dark" style="font-size: 1.5rem;">
+                                        <?php echo $pending_review_count; ?>
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                        <?php endif; ?>
+                        
+                        <?php if ($changes_requested_count > 0): ?>
+                        <div class="col-md-6 mb-3">
+                            <div class="d-flex align-items-center justify-content-between p-3 border rounded">
+                                <div>
+                                    <h6 class="mb-1">📝 Changes Requested</h6>
+                                    <p class="mb-0 text-muted">Waiting for user updates</p>
+                                </div>
+                                <div>
+                                    <span class="badge bg-info" style="font-size: 1.5rem;">
+                                        <?php echo $changes_requested_count; ?>
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                        <?php endif; ?>
+                    </div>
+                    
+                    <div class="text-center mt-2">
+                        <a href="review_complaints.php" class="btn btn-warning">
+                            <i class="bi bi-shield-check"></i> Review Complaints Now
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <?php endif; ?>
+<?php endif; ?>
+
 
 <!-- Charts Section -->
 <!-- Quick Actions -->

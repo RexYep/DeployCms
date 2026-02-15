@@ -18,6 +18,8 @@ $page_title = "My Complaints";
 
 $user_id = $_SESSION['user_id'];
 
+$approval_filter = isset($_GET['approval_status']) ? sanitizeInput($_GET['approval_status']) : '';
+
 // Filter parameters
 $status_filter = isset($_GET['status']) ? sanitizeInput($_GET['status']) : '';
 $search_query = isset($_GET['search']) ? sanitizeInput($_GET['search']) : '';
@@ -35,6 +37,12 @@ $types = "i";
 if (!empty($status_filter)) {
     $where_conditions[] = "c.status = ?";
     $params[] = $status_filter;
+    $types .= "s";
+}
+
+if (!empty($approval_filter)) {
+    $where_conditions[] = "c.approval_status = ?";
+    $params[] = $approval_filter;
     $types .= "s";
 }
 
@@ -85,30 +93,53 @@ include '../includes/navbar.php';
         <div class="card">
             <div class="card-body">
                 <form method="GET" action="" class="row g-3">
-                    <div class="col-md-4">
-                        <label for="status" class="form-label">Filter by Status</label>
-                        <select class="form-select" id="status" name="status">
-                            <option value="">All Status</option>
-                            <option value="Pending" <?php echo $status_filter == 'Pending' ? 'selected' : ''; ?>>Pending</option>
-                            <option value="In Progress" <?php echo $status_filter == 'In Progress' ? 'selected' : ''; ?>>In Progress</option>
-                            <option value="Resolved" <?php echo $status_filter == 'Resolved' ? 'selected' : ''; ?>>Resolved</option>
-                            <option value="Closed" <?php echo $status_filter == 'Closed' ? 'selected' : ''; ?>>Closed</option>
-                        </select>
-                    </div>
-                    
-                    <div class="col-md-6">
-                        <label for="search" class="form-label">Search</label>
-                        <input type="text" class="form-control" id="search" name="search" 
-                               placeholder="Search by subject or description..." 
-                               value="<?php echo htmlspecialchars($search_query); ?>">
-                    </div>
-                    
-                    <div class="col-md-2 d-flex align-items-end">
-                        <button type="submit" class="btn btn-primary w-100">
-                            <i class="bi bi-search"></i> Filter
-                        </button>
-                    </div>
-                </form>
+    <!-- Filter by Status -->
+    <div class="col-md-3">
+        <label for="status" class="form-label">Filter by Status</label>
+        <select class="form-select" id="status" name="status">
+            <option value="">All Status</option>
+            <option value="Pending" <?php echo $status_filter == 'Pending' ? 'selected' : ''; ?>>Pending</option>
+            <option value="In Progress" <?php echo $status_filter == 'In Progress' ? 'selected' : ''; ?>>In Progress</option>
+            <option value="Resolved" <?php echo $status_filter == 'Resolved' ? 'selected' : ''; ?>>Resolved</option>
+            <option value="Closed" <?php echo $status_filter == 'Closed' ? 'selected' : ''; ?>>Closed</option>
+        </select>
+    </div>
+
+    <!-- Approval Status -->
+    <div class="col-md-3">
+        <label for="approval_status" class="form-label">Approval Status</label>
+        <select class="form-select" id="approval_status" name="approval_status">
+            <option value="">All</option>
+            <option value="pending_review" <?php echo $approval_filter == 'pending_review' ? 'selected' : ''; ?>>
+                ⏳ Pending Review
+            </option>
+            <option value="approved" <?php echo $approval_filter == 'approved' ? 'selected' : ''; ?>>
+                ✅ Approved
+            </option>
+            <option value="changes_requested" <?php echo $approval_filter == 'changes_requested' ? 'selected' : ''; ?>>
+                📝 Changes Requested
+            </option>
+            <option value="rejected" <?php echo $approval_filter == 'rejected' ? 'selected' : ''; ?>>
+                ❌ Rejected
+            </option>
+        </select>
+    </div>
+    
+    <!-- Search -->
+    <div class="col-md-4">
+        <label for="search" class="form-label">Search</label>
+        <input type="text" class="form-control" id="search" name="search" 
+               placeholder="Search by subject or description..." 
+               value="<?php echo htmlspecialchars($search_query); ?>">
+    </div>
+    
+    <!-- Filter Button -->
+    <div class="col-md-2 d-flex align-items-end">
+        <button type="submit" class="btn btn-primary w-100">
+            <i class="bi bi-search"></i> Filter
+        </button>
+    </div>
+</form>
             </div>
         </div>
     </div>
@@ -143,6 +174,7 @@ include '../includes/navbar.php';
                                     <th>Subject</th>
                                     <th>Category</th>
                                     <th>Status</th>
+                                    <th>Approval</th>
                                     <th>Priority</th>
                                     <th>Submitted</th>
                                     <th>Days Pending</th>
@@ -162,6 +194,19 @@ include '../includes/navbar.php';
                                             </small>
                                         </div>
                                     </td>
+                                                            <td>
+                            <?php
+                            if ($complaint['approval_status'] == 'pending_review') {
+                                echo '<span class="badge bg-warning text-dark">Pending</span>';
+                            } elseif ($complaint['approval_status'] == 'approved') {
+                                echo '<span class="badge bg-success">✓ Approved</span>';
+                            } elseif ($complaint['approval_status'] == 'rejected') {
+                                echo '<span class="badge bg-danger">✗ Rejected</span>';
+                            } elseif ($complaint['approval_status'] == 'changes_requested') {
+                                echo '<span class="badge bg-info">📝 Edit</span>';
+                            }
+                            ?>
+                        </td>
                                     <td>
                                         <span class="badge bg-light text-dark">
                                             <?php echo htmlspecialchars($complaint['category_name'] ?? 'N/A'); ?>
@@ -187,17 +232,19 @@ include '../includes/navbar.php';
                                             <?php echo $days; ?> day<?php echo $days != 1 ? 's' : ''; ?>
                                         </span>
                                     </td>
-                                    <td>
-                                        <a href="complaint_details.php?id=<?php echo $complaint['complaint_id']; ?>" 
-                                           class="btn btn-sm btn-outline-primary">
-                                            <i class="bi bi-eye"></i> View
-                                        </a>
-                                        <?php if ($complaint['comment_count'] > 0): ?>
-                                            <span class="badge bg-info ms-1">
-                                                <i class="bi bi-chat-dots"></i> <?php echo $complaint['comment_count']; ?>
-                                            </span>
-                                        <?php endif; ?>
-                                    </td>
+                                   <td>
+    <div class="d-flex align-items-center gap-2">
+        <a href="complaint_details.php?id=<?php echo $complaint['complaint_id']; ?>" 
+           class="btn btn-sm btn-outline-primary">
+            <i class="bi bi-eye"></i> View
+        </a>
+        <?php if ($complaint['comment_count'] > 0): ?>
+            <span class="badge bg-info comment-badge">
+                <i class="bi bi-chat-dots-fill"></i> <?php echo $complaint['comment_count']; ?>
+            </span>
+        <?php endif; ?>
+    </div>
+</td>
                                 </tr>
                                 <?php endwhile; ?>
                             </tbody>
@@ -252,5 +299,132 @@ include '../includes/navbar.php';
 </div>
 
 </div> <!-- End Main Content -->
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Get last seen comment counts from localStorage
+    const lastSeenCounts = JSON.parse(localStorage.getItem('lastSeenCommentCounts') || '{}');
+    
+    // Process each comment badge
+    document.querySelectorAll('.comment-badge').forEach(badge => {
+        const row = badge.closest('tr');
+        const complaintLink = row.querySelector('a[href*="complaint_details.php"]');
+        
+        if (complaintLink) {
+            const url = new URL(complaintLink.href);
+            const complaintId = url.searchParams.get('id');
+            
+            // Extract current comment count from badge
+            const badgeText = badge.textContent.trim();
+            const currentCount = parseInt(badgeText.match(/\d+/)[0]);
+            
+            // Get last seen count for this complaint
+            const lastSeenCount = lastSeenCounts[complaintId] || 0;
+            
+            console.log(`Complaint #${complaintId}: Current=${currentCount}, LastSeen=${lastSeenCount}`);
+            
+            // Compare counts
+            if (currentCount <= lastSeenCount) {
+                // User has seen all comments - hide badge completely
+                badge.style.transition = 'all 0.3s ease';
+                badge.style.opacity = '0';
+                badge.style.transform = 'scale(0) translateX(20px)';
+                
+                setTimeout(() => {
+                    badge.remove();
+                    console.log(`Badge removed for complaint #${complaintId} - all comments seen`);
+                }, 300);
+                
+            } else {
+                // There are NEW comments since last view
+                const newComments = currentCount - lastSeenCount;
+                
+                if (newComments < currentCount) {
+                    // Some comments are new, update badge text
+                    badge.innerHTML = `<i class="bi bi-chat-dots-fill"></i> ${newComments} NEW`;
+                    badge.classList.add('badge-new');
+                    badge.style.animation = 'pulse 2s infinite';
+                    
+                    console.log(`Complaint #${complaintId}: Showing ${newComments} new comments`);
+                } else {
+                    // All comments are new (never viewed)
+                    badge.classList.add('badge-unread');
+                    badge.style.animation = 'pulse 2s infinite';
+                    
+                    console.log(`Complaint #${complaintId}: All ${currentCount} comments are new`);
+                }
+            }
+        }
+    });
+});
+
+// Add pulse animation
+const style = document.createElement('style');
+style.textContent = `
+    @keyframes pulse {
+        0%, 100% { transform: scale(1); }
+        50% { transform: scale(1.08); }
+    }
+    
+    .badge-new {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+        box-shadow: 0 0 10px rgba(102, 126, 234, 0.5);
+        font-weight: bold;
+    }
+    
+    .badge-unread {
+        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%) !important;
+        box-shadow: 0 0 10px rgba(245, 87, 108, 0.5);
+    }
+    
+    [data-theme="dark"] .badge-new,
+    [data-theme="dark"] .badge-unread {
+        border: 1px solid rgba(255, 255, 255, 0.3);
+    }
+`;
+document.head.appendChild(style);
+// Dark Mode Functionality
+const darkModeToggle = document.getElementById('darkModeToggle');
+const darkModeIcon = document.getElementById('darkModeIcon');
+const body = document.body;
+const html = document.documentElement;
+
+// Check for saved theme preference
+const currentTheme = localStorage.getItem('theme') || 'light';
+html.setAttribute('data-theme', currentTheme);
+
+if (currentTheme === 'dark') {
+    body.classList.add('dark-mode');
+    if (darkModeIcon) {
+        darkModeIcon.classList.remove('bi-moon-stars-fill');
+        darkModeIcon.classList.add('bi-sun-fill');
+    }
+}
+
+// Toggle dark mode
+if (darkModeToggle) {
+    darkModeToggle.addEventListener('click', function() {
+        const isDark = html.getAttribute('data-theme') === 'dark';
+        
+        if (isDark) {
+            html.setAttribute('data-theme', 'light');
+            body.classList.remove('dark-mode');
+            localStorage.setItem('theme', 'light');
+            if (darkModeIcon) {
+                darkModeIcon.classList.remove('bi-sun-fill');
+                darkModeIcon.classList.add('bi-moon-stars-fill');
+            }
+        } else {
+            html.setAttribute('data-theme', 'dark');
+            body.classList.add('dark-mode');
+            localStorage.setItem('theme', 'dark');
+            if (darkModeIcon) {
+                darkModeIcon.classList.remove('bi-moon-stars-fill');
+                darkModeIcon.classList.add('bi-sun-fill');
+            }
+        }
+    });
+}
+</script>
 
 <?php include '../includes/footer.php'; ?>

@@ -53,9 +53,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $error = 'Description must be at least 20 characters long';
     } else {
         // Insert complaint
-        $stmt = $conn->prepare("INSERT INTO complaints (user_id, category_id, subject, description, priority, status) VALUES (?, ?, ?, ?, ?, 'Pending')");
+     $stmt = $conn->prepare("INSERT INTO complaints (user_id, category_id, subject, description, priority, status) VALUES (?, ?, ?, ?, ?, 'Pending')");
         $stmt->bind_param("iisss", $user_id, $category_id, $subject, $description, $priority);
-        
+
         if ($stmt->execute()) {
             $complaint_id = $conn->insert_id;
             
@@ -128,14 +128,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt->bind_param("ii", $complaint_id, $user_id);
             $stmt->execute();
             
-            // Notify all admins about new complaint
-            $admins = $conn->query("SELECT user_id FROM users WHERE role = 'admin' AND status = 'active'");
-            while ($admin = $admins->fetch_assoc()) {
-                $notif_title = "New Complaint Submitted";
-                $notif_message = "Complaint #$complaint_id: " . substr($subject, 0, 50) . "... (Priority: $priority)";
-                $notif_type = ($priority == 'High') ? 'danger' : 'info';
-                createNotification($admin['user_id'], $notif_title, $notif_message, $notif_type, $complaint_id);
-            }
+        // Notify ONLY super admins about new complaint (regular admins get notified when assigned)
+$super_admins = $conn->query("SELECT user_id FROM users WHERE role = 'admin' AND admin_level = 'super_admin' AND status = 'active'");
+while ($admin = $super_admins->fetch_assoc()) {
+    $notif_title = "New Complaint Submitted";
+    $notif_message = "Complaint #$complaint_id: " . substr($subject, 0, 50) . "... (Priority: $priority)";
+    $notif_type = ($priority == 'High') ? 'danger' : 'info';
+    createNotification($admin['user_id'], $notif_title, $notif_message, $notif_type, $complaint_id);
+}
             
             if ($upload_success) {
                 $success = 'Complaint submitted successfully! Tracking ID: #' . $complaint_id;

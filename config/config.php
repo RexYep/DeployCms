@@ -3,6 +3,11 @@
 // GENERAL APPLICATION CONFIGURATION
 // config/config.php
 // ============================================
+require_once __DIR__ . '/../vendor/autoload.php';
+
+$dotenv = Dotenv\Dotenv::createImmutable(dirname(__DIR__));
+$dotenv->load();
+
 
 // Start session if not already started
 if (session_status() === PHP_SESSION_NONE) {
@@ -10,9 +15,9 @@ if (session_status() === PHP_SESSION_NONE) {
 }
 
 // Application Settings
-define('SITE_NAME', 'Complaint Management System');
-define('SITE_URL', 'http://localhost/complaint-management-system/');
-define('ADMIN_EMAIL', 'cmsproperty278@gmail.com');
+define('SITE_NAME', $_ENV['SITE_NAME']);
+define('SITE_URL', $_ENV['SITE_URL']);
+define('ADMIN_EMAIL', $_ENV['ADMIN_MAIL']);
 
 // Path Settings
 define('BASE_PATH', dirname(__DIR__) . '/');
@@ -108,20 +113,17 @@ function daysElapsed($date) {
 
 // Function to get status badge class
 function getStatusBadge($status) {
-    switch($status) {
-        case STATUS_PENDING:
-            return 'badge bg-warning text-dark';
-        case STATUS_IN_PROGRESS:
-            return 'badge bg-info text-white';
-        case STATUS_RESOLVED:
-            return 'badge bg-success';
-        case STATUS_CLOSED:
-            return 'badge bg-secondary';
-        default:
-            return 'badge bg-secondary';
-    }
+    $badges = [
+        'Pending' => 'badge bg-warning text-dark',
+        'Assigned' => 'badge bg-info',
+        'In Progress' => 'badge bg-primary',
+        'On Hold' => 'badge bg-secondary',
+        'Resolved' => 'badge bg-success',
+        'Closed' => 'badge bg-dark'
+    ];
+    
+    return $badges[$status] ?? 'badge bg-secondary';
 }
-
 // Function to get priority badge class
 function getPriorityBadge($priority) {
     switch($priority) {

@@ -8,19 +8,23 @@
 $current_page = basename($_SERVER['PHP_SELF']);
 $is_admin = isAdmin();
 $is_user = isUser();
-
-// Determine the base path based on current directory
-$current_dir = basename(dirname($_SERVER['PHP_SELF']));
-$base_path = ($current_dir == 'admin' || $current_dir == 'user') ? '../' : '';
-?>
+$pending_review = $conn->query("SELECT COUNT(*) as count FROM complaints WHERE approval_status = 'pending_review'")->fetch_assoc()['count']; ?>
 
 <!-- Sidebar Navigation -->
 <div class="sidebar" id="sidebar">
     <div class="sidebar-brand">
-        <i class="bi bi-shield-check"></i>
-        <div><?php echo $is_admin ? 'CMS Admin' : 'CMS User'; ?></div>
+        <!-- Barangay Logo -->
+        <img src="<?php echo SITE_URL; ?>assets/images/barangay-logo.jpg" 
+            alt="Barangay Logo" 
+            class="sidebar-logo"
+            style="width: 80px; height: 80px; object-fit: cover; border-radius: 50%; margin-bottom: 10px; border: 3px solid rgba(255,255,255,0.3);">
+        
+        <!-- System Name -->
+        <div><?php echo $is_admin ? '' : ''; ?></div>
+        
+          <!-- Subtitle -->
         <small class="d-block mt-1" style="font-size: 0.75rem; opacity: 0.8;">
-            <?php echo $is_admin ? 'Administration Panel' : 'User Dashboard'; ?>
+            <?php echo $is_admin ? '' : ''; ?>
         </small>
     </div>
     
@@ -79,6 +83,15 @@ $base_path = ($current_dir == 'admin' || $current_dir == 'user') ? '../' : '';
         <?php endif; ?>
     </a>
 </li>
+    <li class="nav-item">
+        <a class="nav-link" href="review_complaints.php">
+            <i class="bi bi-shield-check"></i> Review
+            <?php if ($pending_review > 0): ?>
+                <span class="badge bg-warning text-dark"><?php echo $pending_review; ?></span>
+            <?php endif; ?>
+        </a>
+    </li>
+
             <?php endif; ?>
             
             <li>
