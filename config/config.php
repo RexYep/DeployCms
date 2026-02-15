@@ -15,7 +15,7 @@ if (session_status() === PHP_SESSION_NONE) {
 
 // Application Settings
 define('SITE_NAME', $_ENV['SITE_NAME']);
-define('SITE_URL', $_ENV['SITE_URL']);
+define('SITE_URL', rtrim($_ENV['SITE_URL'], '/'));
 define('ADMIN_EMAIL', $_ENV['ADMIN_MAIL']);
 
 // Path Settings
@@ -70,7 +70,7 @@ function isUser() {
 // Function to redirect if not logged in
 function requireLogin() {
     if (!isLoggedIn()) {
-        header("Location: " . SITE_URL . "auth/login.php");
+        header("Location: /auth/login.php");
         exit();
     }
 }
@@ -79,7 +79,7 @@ function requireLogin() {
 function requireAdmin() {
     requireLogin();
     if (!isAdmin()) {
-        header("Location: " . SITE_URL . "user/index.php");
+        header("Location: /user/index.php");
         exit();
     }
 }

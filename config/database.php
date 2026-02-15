@@ -17,8 +17,6 @@ define('DB_SSL_CA', $_ENV['DB_SSL_CA'] ?? '');
 define('USE_SSL', ($_ENV['USE_SSL'] ?? 'false') === 'true');
 
 // Initialize connection
-$conn = null;
-
 if (USE_SSL && DB_SSL_CA && file_exists(DB_SSL_CA)) {
     $conn = mysqli_init();
     $conn->ssl_set(NULL, NULL, DB_SSL_CA, NULL, NULL);
