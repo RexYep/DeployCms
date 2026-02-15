@@ -3,7 +3,7 @@ FROM php:8.2-apache
 # Enable Apache rewrite
 RUN a2enmod rewrite
 
-# Install PHP extensions required by Composer packages
+# Install required packages & PHP extensions
 RUN apt-get update && apt-get install -y \
     git unzip zip libzip-dev \
     && docker-php-ext-install mysqli pdo pdo_mysql \
@@ -18,10 +18,10 @@ WORKDIR /var/www/html
 # Copy project files
 COPY . .
 
-# Install PHP dependencies via Composer
+# Install PHP dependencies
 RUN composer install --no-dev --optimize-autoloader
 
-# Copy cert folder
+# Copy SSL cert folder (redundant if already in project copy)
 COPY certs/ca.pem /var/www/html/certs/ca.pem
 
 # Set permissions
