@@ -6,8 +6,7 @@
 require_once __DIR__ . '/../vendor/autoload.php';
 
 $dotenv = Dotenv\Dotenv::createImmutable(dirname(__DIR__));
-$dotenv->load();
-
+$dotenv->safeLoad();
 
 // Start session if not already started
 if (session_status() === PHP_SESSION_NONE) {
